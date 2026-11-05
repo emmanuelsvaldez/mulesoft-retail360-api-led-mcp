@@ -4,11 +4,19 @@
 
 # Compilados de Maven y Runtime de MuleSoft
 **/target/
+**/bin/
 **/.mule/
+**/.sf/
+**/.sfdx/
 .mule/
 .metadata/
 .tooling/
 .tooling-apps-cache/
+
+# Guías y apuntes personales de trabajo (excluidos del entregable oficial)
+evidencias/GUIA_MAESTRA_PRUEBAS_EVIDENCIAS_Y_VIDEO.md
+evidencias/PLAN_ENTREGA_FINAL_SEGURIDAD.md
+evidencias/capturas/README_CAPTURAS.md
 
 # Archivos de configuración local de Eclipse / Anypoint Studio (no requeridos)
 **/.settings/
