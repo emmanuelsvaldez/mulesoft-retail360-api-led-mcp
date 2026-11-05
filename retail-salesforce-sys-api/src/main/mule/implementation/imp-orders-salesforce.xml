@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
+
+	<!-- ============================================================================ -->
+	<!-- 1. Upsert Orden Comercial en Salesforce (PUT /orders/{orderId})              -->
+	<!--    Upsert Retail_Order__c por External_Order_Id__c y Detalle por External ID -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-put-order-salesforceSub_Flow" doc:id="sfdc-subflow-put-001">
+		<set-variable value="#[payload]" doc:name="Save upsertPayload" doc:id="set-var-upsert-payload" variableName="upsertPayload" />
+		<set-variable value="#[%dw 2.0 output application/java --- trim((attributes.uriParams.'orderId' default payload.orderId) as String replace '*' with '')]" doc:name="Set orderId" doc:id="set-var-order-id-put" variableName="orderId" />
+
+		<!-- 1.1 Preparar y ejecutar Upsert en Retail_Order__c -->
+		<ee:transform doc:name="Map Retail_Order__c" doc:id="tf-map-retail-order">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+fun clean(val) = if (val != null) trim(val as String replace '*' with '') else null
+---
+[{
+    External_Order_Id__c: vars.orderId,
+    Customer_Id__c: clean(vars.upsertPayload.customer.customerId),
+    Customer_Name__c: clean(vars.upsertPayload.customer.name),
+    Customer_Email__c: clean(vars.upsertPayload.customer.email),
+    Total__c: vars.upsertPayload.total as Number,
+    Currency_Code__c: clean(vars.upsertPayload.currency) default "MXN",
+    Status__c: "SYNCED"
+}]]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<salesforce:upsert doc:name="Upsert Retail_Order__c" doc:id="sfdc-upsert-order"
+			config-ref="Salesforce_Config"
+			objectType="Retail_Order__c"
+			externalIdFieldName="External_Order_Id__c"
+			target="headerUpsertResult" />
+
+		<logger level="INFO" doc:name="Log Header Upsert Result" message="#['[SF-HEADER-DEBUG] Order: ' ++ (vars.orderId default '') ++ ' Result: ' ++ write(vars.headerUpsertResult, 'application/json')]" />
+
+		<!-- Validar resultado de cabecera -->
+		<choice doc:name="Header Upsert Successful?" doc:id="choice-header-upsert">
+			<when expression="#[(vars.headerUpsertResult.successful default false) == false or (vars.headerUpsertResult.items[0].successful default false) == false]">
+				<raise-error doc:name="Raise SALESFORCE_REJECTED (502)" doc:id="raise-header-rejected"
+					type="APP:SALESFORCE_REJECTED"
+					description="#['Salesforce rechazo la cabecera de la orden ' ++ (vars.orderId default '') ++ ': ' ++ (vars.headerUpsertResult.items[0].message default (vars.headerUpsertResult.items[0].payload.errors[0].message default 'Error desconocido'))]" />
+			</when>
+		</choice>
+
+		<!-- Resolver el Id del registro padre Retail_Order__c en Salesforce -->
+		<set-variable value="#[%dw 2.0 output application/java --- vars.headerUpsertResult.items[0].id]" doc:name="Try get Header SF ID" doc:id="set-var-sf-order-id" variableName="salesforceOrderId" />
+		<choice doc:name="Header SF ID Found?" doc:id="choice-header-sf-id">
+			<when expression="#[isEmpty(vars.salesforceOrderId)]">
+				<salesforce:query doc:name="Query Header SF ID by External ID" doc:id="sfdc-query-header-id"
+					config-ref="Salesforce_Config"
+					target="queriedHeader">
+					<salesforce:salesforce-query><![CDATA[SELECT Id FROM Retail_Order__c WHERE External_Order_Id__c = ':extId' LIMIT 1]]></salesforce:salesforce-query>
+					<salesforce:parameters><![CDATA[#[output application/java --- { extId: vars.orderId }]]]></salesforce:parameters>
+				</salesforce:query>
+				<set-variable value="#[%dw 2.0 output application/java --- vars.queriedHeader[0].Id]" doc:name="Set salesforceOrderId from Query" doc:id="set-var-sf-id-queried" variableName="salesforceOrderId" />
+			</when>
+		</choice>
+
+		<!-- 1.2 Preparar y ejecutar Upsert en Retail_Order_Item__c por External_Line_Id__c -->
+		<ee:transform doc:name="Map Retail_Order_Item__c[]" doc:id="tf-map-order-items">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.upsertPayload.items map (item) -> {
+    External_Line_Id__c: vars.orderId ++ "-" ++ item.sku,
+    Order__c: vars.salesforceOrderId,
+    SKU__c: item.sku,
+    Quantity__c: item.quantity as Number,
+    Unit_Price__c: item.unitPrice as Number,
+    Subtotal__c: item.subtotal as Number
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<salesforce:upsert doc:name="Upsert Retail_Order_Item__c" doc:id="sfdc-upsert-items"
+			config-ref="Salesforce_Config"
+			objectType="Retail_Order_Item__c"
+			externalIdFieldName="External_Line_Id__c"
+			target="itemsUpsertResult" />
+
+		<!-- 1.3 Validación de Resultados Parciales (CA-12): confirmar SYNCED solo si TODAS las líneas tuvieron éxito -->
+		<choice doc:name="All Line Items Successful?" doc:id="choice-verify-all-lines">
+			<when expression="#[(vars.itemsUpsertResult.successful default false) == false or sizeOf((vars.itemsUpsertResult.items default []) filter ($.successful == false)) &gt; 0]">
+				<ee:transform doc:name="Collect Partial Errors" doc:id="tf-collect-line-errors">
+					<ee:variables>
+						<ee:set-variable variableName="failedLinesMsg"><![CDATA[%dw 2.0
+output application/java
+var failed = (vars.itemsUpsertResult.items default []) filter ($.successful == false)
+---
+(failed map ((f, idx) -> "Linea " ++ (idx + 1) ++ ": " ++ ((f.errors..message joinBy '; ') default 'Fallo')) joinBy " | ") default "Error parcial en lineas"]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<raise-error doc:name="Raise SALESFORCE_REJECTED (502)" doc:id="raise-partial-lines-rejected"
+					type="APP:SALESFORCE_REJECTED"
+					description="#['Salesforce rechazo una o mas lineas de la orden: ' ++ (vars.failedLinesMsg default '')]" />
+			</when>
+		</choice>
+
+		<!-- 1.4 Respuesta Exitosa de Sincronización (HTTP 200 OK) -->
+		<ee:transform doc:name="Build SalesforceSyncResponse (200)" doc:id="sfdc-tf-put-001">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var lineCount = sizeOf(vars.itemsUpsertResult.items default [])
+---
+{
+  orderId: vars.orderId,
+  salesforceId: vars.salesforceOrderId default "",
+  syncStatus: "SYNCED",
+  syncedItems: lineCount,
+  message: "Cabecera y " ++ lineCount ++ " lineas sincronizadas por External ID."
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 2. Consultar Orden en Salesforce CRM (GET /orders/{orderId})                 -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-get-order-salesforceSub_Flow" doc:id="sfdc-subflow-get-001">
+		<set-variable value="#[%dw 2.0 output application/java --- attributes.uriParams.'orderId' default vars.orderId]" doc:name="Set orderId" doc:id="set-var-get-sf-order-id" variableName="orderId" />
+
+		<salesforce:query doc:name="Query Header from Salesforce" doc:id="sfdc-query-header"
+			config-ref="Salesforce_Config"
+			target="sfHeaderResult">
+			<salesforce:salesforce-query><![CDATA[SELECT Id, External_Order_Id__c, Customer_Id__c, Customer_Name__c, Customer_Email__c, Total__c, Currency_Code__c, Status__c
+FROM Retail_Order__c
+WHERE External_Order_Id__c = ':extId'
+LIMIT 1]]></salesforce:salesforce-query>
+			<salesforce:parameters><![CDATA[#[output application/java --- { extId: vars.orderId }]]]></salesforce:parameters>
+		</salesforce:query>
+
+		<choice doc:name="Header Found in Salesforce?" doc:id="choice-sf-header-found">
+			<when expression="#[!isEmpty(vars.sfHeaderResult)]">
+				<salesforce:query doc:name="Query Items from Salesforce" doc:id="sfdc-query-items"
+					config-ref="Salesforce_Config"
+					target="sfItemsResult">
+					<salesforce:salesforce-query><![CDATA[SELECT External_Line_Id__c, SKU__c, Quantity__c, Unit_Price__c, Subtotal__c
+FROM Retail_Order_Item__c
+WHERE Order__c = ':sfOrderId']]></salesforce:salesforce-query>
+					<salesforce:parameters><![CDATA[#[output application/java --- { sfOrderId: vars.sfHeaderResult[0].Id }]]]></salesforce:parameters>
+				</salesforce:query>
+
+				<ee:transform doc:name="Build SalesforceOrderView (200)" doc:id="sfdc-tf-get-001">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var h = vars.sfHeaderResult[0]
+---
+{
+  orderId: h.External_Order_Id__c,
+  salesforceId: h.Id,
+  customer: {
+    customerId: h.Customer_Id__c default "",
+    name: h.Customer_Name__c default "",
+    email: h.Customer_Email__c default ""
+  },
+  items: (vars.sfItemsResult default []) map (i) -> {
+    sku: i.SKU__c default "",
+    quantity: (i.Quantity__c default 0) as Number,
+    unitPrice: (i.Unit_Price__c default 0) as Number,
+    subtotal: (i.Subtotal__c default 0) as Number
+  },
+  total: (h.Total__c default 0) as Number,
+  currency: h.Currency_Code__c default "MXN"
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<raise-error doc:name="Raise ORDER_NOT_FOUND_SF (404)" doc:id="raise-sf-not-found"
+					type="APP:ORDER_NOT_FOUND"
+					description="#['La orden ' ++ (vars.orderId default '') ++ ' no fue encontrada en Salesforce CRM.']" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+</mule>

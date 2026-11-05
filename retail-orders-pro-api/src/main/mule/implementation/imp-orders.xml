@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================================================ -->
+	<!-- 1. Consultar orden por ID desde Database System API                          -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-get-order-by-idSub_Flow" doc:id="86d23d87-154a-44f6-9bb9-2211cd8f6756">
+		<ee:transform doc:name="Setup GET Order Request" doc:id="16211dea-86d6-4559-bb46-6e52a5b0d369">
+			<ee:variables>
+				<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.getOrderById.method'),
+    path: (p('retail-db-sys-api.http.paths.getOrderById.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="client_request_retailDbSysApiSub_Flow" doc:id="115127e4-cf69-4819-9c65-b3ecec780c41" name="client_request_retailDbSysApiSub_Flow"/>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 2. Orquestar Alta de Orden (RF-02..RF-07, CA-02, CA-04, CA-06, CA-08, CA-09) -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-create-orderSub_Flow" doc:id="20077614-38b3-4c1c-a1cc-aacd7780a250">
+		<set-variable value="#[payload]" doc:name="Save originalOrderReq" doc:id="set-var-orig-order-req" variableName="originalOrderReq" />
+		<set-variable value="#[payload.orderId]" doc:name="Set orderId" doc:id="set-var-pro-order-id" variableName="orderId" />
+
+		<!-- 2.1 Validación CA-08: Rechazar SKU duplicado en la misma orden -->
+		<ee:transform doc:name="Check Duplicate SKUs" doc:id="tf-check-dup-skus-pro">
+			<ee:variables>
+				<ee:set-variable variableName="hasDuplicateSkus"><![CDATA[%dw 2.0
+output application/java
+var skus = payload.items.*sku default []
+---
+sizeOf(skus) != sizeOf(skus distinctBy $)]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<choice doc:name="Duplicate SKUs Found?" doc:id="choice-pro-dup-skus">
+			<when expression="#[vars.hasDuplicateSkus == true]">
+				<ee:transform doc:name="Reject Duplicate SKU (400)" doc:id="tf-reject-dup-sku-pro">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "DUPLICATE_SKU",
+    message: "No se permiten SKUs duplicados dentro de la misma orden.",
+    httpStatus: 400,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<!-- 2.2 Validación de cada producto y stock con Database System (For Each) -->
+				<set-variable value="#[null]" doc:name="Init preValidationError" doc:id="set-var-pre-val-err" variableName="preValidationError" />
+				<foreach doc:name="For Each Item Validate with DB" doc:id="foreach-val-item-db" collection="#[vars.originalOrderReq.items]">
+					<choice doc:name="Skip if already errored" doc:id="choice-skip-if-errored">
+						<when expression="#[vars.preValidationError == null]">
+							<set-variable value="#[payload]" doc:name="Set currentItemToValidate" doc:id="set-var-item-val" variableName="currentItemToValidate" />
+							<ee:transform doc:name="Setup GET Product Request" doc:id="tf-setup-get-prod-val">
+								<ee:variables>
+									<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.getProductBySku.method'),
+    path: (p('retail-db-sys-api.http.paths.getProductBySku.path') replace "{sku}" with (vars.currentItemToValidate.sku default ""))
+}]]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+							<flow-ref doc:name="Call DB Sys GET Product" doc:id="flow-ref-call-db-prod-val" name="client_request_retailDbSysApiSub_Flow"/>
+
+							<!-- Evaluar respuesta de DB para este producto -->
+							<choice doc:name="Product Valid in DB?" doc:id="choice-prod-valid-db">
+								<when expression="#[(vars.httpStatus default 200) != 200]">
+									<!-- Producto no existe (404) o error de BD (CA-06) -->
+									<set-variable value="#[payload]" doc:name="Save DB Product Error" doc:id="set-var-err-prod-not-found" variableName="preValidationError" />
+								</when>
+								<when expression="#[!(payload.active default true)]">
+									<!-- Producto inactivo (400) -->
+									<ee:transform doc:name="Build Product Inactive Error" doc:id="tf-prod-inactive-err">
+										<ee:variables>
+											<ee:set-variable variableName="preValidationError"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "VALIDATION_ERROR",
+    message: "El producto solicitado esta inactivo: " ++ (vars.currentItemToValidate.sku default ""),
+    httpStatus: 400,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-variable>
+											<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</when>
+								<when expression="#[(payload.stock as Number) &lt; (vars.currentItemToValidate.quantity as Number)]">
+									<!-- Stock insuficiente (409) (CA-07) -->
+									<ee:transform doc:name="Build Insufficient Stock Error" doc:id="tf-insufficient-stock-err">
+										<ee:variables>
+											<ee:set-variable variableName="preValidationError"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "INSUFFICIENT_STOCK",
+    message: "Inventario insuficiente para el SKU: " ++ (vars.currentItemToValidate.sku default ""),
+    httpStatus: 409,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-variable>
+											<ee:set-variable variableName="httpStatus"><![CDATA[409]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</when>
+							</choice>
+						</when>
+					</choice>
+				</foreach>
+
+				<choice doc:name="Has PreValidation Error?" doc:id="choice-has-preval-err">
+					<when expression="#[vars.preValidationError != null]">
+						<set-payload value="#[vars.preValidationError]" doc:name="Return PreValidation Error" doc:id="set-payload-preval-err" />
+					</when>
+					<otherwise>
+						<!-- 2.3 Persistir con Transacción Atómica en Database System API (POST /orders) -->
+						<set-payload value="#[vars.originalOrderReq]" doc:name="Restore originalOrderReq" doc:id="set-payload-restore-order-req" />
+						<ee:transform doc:name="Setup POST Order DB Request" doc:id="a94f2bab-debe-4a02-bfe3-48a28ea7a4b3">
+							<ee:variables>
+								<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.createOrder.method'),
+    path: p('retail-db-sys-api.http.paths.createOrder.path')
+}]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+						<flow-ref doc:name="Call DB Sys POST Order" doc:id="2ea077f7-970a-4688-8ee8-131d1a2a784c" name="client_request_retailDbSysApiSub_Flow"/>
+
+						<choice doc:name="DB Creation Succeeded?" doc:id="choice-db-creation-succeeded">
+							<when expression="#[(vars.httpStatus default 201) != 201]">
+								<!-- Error al persistir en BD (ej. 409 ORDER_ALREADY_EXISTS para CA-04) -->
+								<logger level="WARN" doc:name="Log DB Creation Failed" doc:id="log-db-fail" message="[#[vars.correlationId]] Fallo creacion en DB: #[payload.error.code default '']" />
+							</when>
+							<otherwise>
+								<!-- Orden persistida con éxito en PostgreSQL (PENDING_SYNC) -->
+								<set-variable value="#[payload]" doc:name="Save createdOrder" doc:id="set-var-saved-created-order" variableName="createdOrder" />
+
+								<!-- 2.4 Sincronización Resiliente hacia Salesforce System API (PUT /orders/{id}) -->
+								<ee:transform doc:name="Prepare Salesforce Upsert Request" doc:id="tf-prep-sf-upsert-req">
+									<ee:message>
+										<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  orderId: vars.createdOrder.orderId,
+  customer: vars.createdOrder.customer,
+  items: vars.createdOrder.items,
+  total: vars.createdOrder.total as Number,
+  currency: vars.createdOrder.currency default "MXN"
+}]]></ee:set-payload>
+									</ee:message>
+									<ee:variables>
+										<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-salesforce-sys-api.http.paths.upsertOrder.method'),
+    path: (p('retail-salesforce-sys-api.http.paths.upsertOrder.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+									</ee:variables>
+								</ee:transform>
+
+								<flow-ref doc:name="Call SF Sys PUT Order" doc:id="flow-ref-call-sf-put" name="client_request_retailSalesforceSysApiSub_Flow"/>
+
+								<!-- 2.5 Evaluar respuesta de Salesforce (RF-06, RF-07, CA-02, CA-09) -->
+								<choice doc:name="Salesforce Synced Successfully?" doc:id="choice-sf-sync-success">
+									<when expression="#[(vars.httpStatus default 200) == 200 and payload.syncStatus == 'SYNCED']">
+										<!-- Salesforce exitoso (201 Created / SYNCED) (CA-02) -->
+										<set-variable value="#[payload.salesforceId]" doc:name="Set salesforceId" doc:id="set-var-sf-id-success" variableName="salesforceId" />
+										<ee:transform doc:name="Setup PATCH Sync DB Request (SYNCED)" doc:id="tf-setup-patch-synced">
+											<ee:message>
+												<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  syncStatus: "SYNCED",
+  syncAttempted: true,
+  salesforceId: vars.salesforceId,
+  lastSyncError: null
+}]]></ee:set-payload>
+											</ee:message>
+											<ee:variables>
+												<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.updateOrderSync.method'),
+    path: (p('retail-db-sys-api.http.paths.updateOrderSync.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+											</ee:variables>
+										</ee:transform>
+										<flow-ref doc:name="Update DB to SYNCED" doc:id="flow-ref-update-db-synced" name="client_request_retailDbSysApiSub_Flow"/>
+
+										<!-- Respuesta final 201 Created -->
+										<ee:transform doc:name="Build Final Response (201 SYNCED)" doc:id="tf-final-resp-201">
+											<ee:message>
+												<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.createdOrder ++ {
+  syncStatus: "SYNCED",
+  salesforceId: vars.salesforceId,
+  syncAttempts: 1,
+  message: "Orden registrada y sincronizada con Salesforce."
+}]]></ee:set-payload>
+											</ee:message>
+											<ee:variables>
+												<ee:set-variable variableName="httpStatus"><![CDATA[201]]></ee:set-variable>
+											</ee:variables>
+										</ee:transform>
+									</when>
+									<otherwise>
+										<!-- Continuidad de negocio (RF-07, CA-09): Salesforce falló -> Responder 202 PENDING_SYNC sin revertir venta -->
+										<set-variable value="#[payload.error.message default 'Error al comunicar con Salesforce CRM']" doc:name="Set lastSyncErrorMsg" doc:id="set-var-sf-err-msg" variableName="lastSyncErrorMsg" />
+										<ee:transform doc:name="Setup PATCH Sync DB Request (PENDING_SYNC)" doc:id="tf-setup-patch-pending">
+											<ee:message>
+												<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  syncStatus: "PENDING_SYNC",
+  syncAttempted: true,
+  lastSyncError: vars.lastSyncErrorMsg
+}]]></ee:set-payload>
+											</ee:message>
+											<ee:variables>
+												<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.updateOrderSync.method'),
+    path: (p('retail-db-sys-api.http.paths.updateOrderSync.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+											</ee:variables>
+										</ee:transform>
+										<flow-ref doc:name="Update DB to PENDING_SYNC" doc:id="flow-ref-update-db-pending" name="client_request_retailDbSysApiSub_Flow"/>
+
+										<!-- Respuesta final 202 Accepted -->
+										<ee:transform doc:name="Build Final Contingency Response (202 PENDING_SYNC)" doc:id="tf-final-resp-202">
+											<ee:message>
+												<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.createdOrder ++ {
+  syncStatus: "PENDING_SYNC",
+  syncAttempts: 1,
+  lastSyncError: vars.lastSyncErrorMsg,
+  message: "Orden guardada en PostgreSQL; sincronizacion con Salesforce pendiente."
+}]]></ee:set-payload>
+											</ee:message>
+											<ee:variables>
+												<ee:set-variable variableName="httpStatus"><![CDATA[202]]></ee:set-variable>
+											</ee:variables>
+										</ee:transform>
+									</otherwise>
+								</choice>
+							</otherwise>
+						</choice>
+					</otherwise>
+				</choice>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 3. Reintentar Sincronización Manual (POST /orders/{id}/sync - RF-08, CA-10)   -->
+	<!--    NUNCA reintenta el POST transaccional ni vuelve a descontar stock          -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-sync-orderSub_Flow" doc:id="82cb0b44-5325-4337-b7be-465b3a013dd2">
+		<set-variable value="#[%dw 2.0 output application/java --- attributes.uriParams.'orderId' default vars.orderId]" doc:name="Set orderId" doc:id="set-var-sync-order-id" variableName="orderId" />
+
+		<!-- 3.1 Consultar la orden YA PERSISTIDA en Database System API -->
+		<ee:transform doc:name="Setup GET Persisted Order Request" doc:id="tf-setup-get-persisted">
+			<ee:variables>
+				<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.getOrderById.method'),
+    path: (p('retail-db-sys-api.http.paths.getOrderById.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="Get Persisted Order from DB" doc:id="flow-ref-get-persisted-order" name="client_request_retailDbSysApiSub_Flow"/>
+
+		<choice doc:name="Order Found in DB?" doc:id="choice-sync-order-found">
+			<when expression="#[(vars.httpStatus default 200) != 200]">
+				<!-- No existe la orden para sincronizar (404) -->
+				<logger level="WARN" doc:name="Log Sync Order Not Found" doc:id="log-sync-not-found" message="[#[vars.correlationId]] Orden no encontrada para sincronizar: #[vars.orderId]" />
+			</when>
+			<when expression="#[payload.syncStatus == 'SYNCED']">
+				<!-- Ya está sincronizada -> retornar 200 OK directamente -->
+				<ee:transform doc:name="Already Synced Response (200)" doc:id="tf-already-synced">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload ++ {
+  message: "La orden ya se encuentra sincronizada con Salesforce."
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<set-variable value="#[payload]" doc:name="Save persistedDbOrder" doc:id="set-var-persisted-db-order" variableName="persistedDbOrder" />
+
+				<!-- 3.2 Invocar Upsert en Salesforce System API -->
+				<ee:transform doc:name="Prepare SF Upsert Request" doc:id="89e663ff-0d31-403f-9b34-69b4c888f530">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  orderId: vars.persistedDbOrder.orderId,
+  customer: vars.persistedDbOrder.customer,
+  items: vars.persistedDbOrder.items,
+  total: vars.persistedDbOrder.total as Number,
+  currency: vars.persistedDbOrder.currency default "MXN"
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-salesforce-sys-api.http.paths.upsertOrder.method'),
+    path: (p('retail-salesforce-sys-api.http.paths.upsertOrder.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+				<flow-ref doc:name="client_request_retailSalesforceSysApiSub_Flow" doc:id="02d97bb1-56e9-4d21-9883-1a5a0c52d77f" name="client_request_retailSalesforceSysApiSub_Flow"/>
+
+				<choice doc:name="Retry Upsert Succeeded?" doc:id="choice-retry-upsert-succeeded">
+					<when expression="#[(vars.httpStatus default 200) == 200 and payload.syncStatus == 'SYNCED']">
+						<!-- Reintento exitoso (CA-10) -> Actualizar DB a SYNCED -->
+						<set-variable value="#[payload.salesforceId]" doc:name="Set salesforceId" doc:id="set-var-retry-sf-id" variableName="salesforceId" />
+						<ee:transform doc:name="Setup PATCH Sync Request (SYNCED)" doc:id="tf-retry-patch-synced">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  syncStatus: "SYNCED",
+  syncAttempted: true,
+  salesforceId: vars.salesforceId,
+  lastSyncError: null
+}]]></ee:set-payload>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.updateOrderSync.method'),
+    path: (p('retail-db-sys-api.http.paths.updateOrderSync.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+						<flow-ref doc:name="Call DB Sys PATCH Sync" doc:id="flow-ref-retry-patch-db" name="client_request_retailDbSysApiSub_Flow"/>
+
+						<ee:transform doc:name="Build Retry Success Response (200 SYNCED)" doc:id="tf-retry-resp-200">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.persistedDbOrder ++ {
+  syncStatus: "SYNCED",
+  salesforceId: vars.salesforceId,
+  syncAttempts: (vars.persistedDbOrder.syncAttempts default 0) + 1,
+  lastSyncError: null,
+  message: "Orden registrada y sincronizada con Salesforce."
+}]]></ee:set-payload>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+					</when>
+					<otherwise>
+						<!-- Reintento fallido -> Incrementar intentos en DB y responder 202 PENDING_SYNC -->
+						<set-variable value="#[payload.error.message default 'Reintento fallido de comunicacion con Salesforce']" doc:name="Set retryErrMessage" doc:id="set-var-retry-err-msg" variableName="retryErrMessage" />
+						<ee:transform doc:name="Setup PATCH Sync Request (Failed Retry)" doc:id="tf-retry-patch-fail">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  syncStatus: "PENDING_SYNC",
+  syncAttempted: true,
+  lastSyncError: vars.retryErrMessage
+}]]></ee:set-payload>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.updateOrderSync.method'),
+    path: (p('retail-db-sys-api.http.paths.updateOrderSync.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+						<flow-ref doc:name="Call DB Sys PATCH Sync Failed" doc:id="flow-ref-retry-patch-fail" name="client_request_retailDbSysApiSub_Flow"/>
+
+						<ee:transform doc:name="Build Retry Failed Response (202 PENDING_SYNC)" doc:id="tf-retry-resp-202">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.persistedDbOrder ++ {
+  syncStatus: "PENDING_SYNC",
+  syncAttempts: (vars.persistedDbOrder.syncAttempts default 0) + 1,
+  lastSyncError: vars.retryErrMessage,
+  message: "Orden guardada en PostgreSQL; sincronizacion con Salesforce pendiente."
+}]]></ee:set-payload>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="httpStatus"><![CDATA[202]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+					</otherwise>
+				</choice>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 4. Scheduler de Recuperación Automática (RF-08)                              -->
+	<!--    Consulta pedidos PENDING_SYNC cada 60s y ejecuta reintento controlado     -->
+	<!-- ============================================================================ -->
+	<flow name="scheduler-retry-pending-ordersFlow" doc:id="flow-scheduler-retry-pending">
+		<scheduler doc:name="Scheduler Every 60s" doc:id="scheduler-60s">
+			<scheduling-strategy>
+				<fixed-frequency frequency="60" timeUnit="SECONDS" startDelay="30" />
+			</scheduling-strategy>
+		</scheduler>
+		<logger level="INFO" doc:name="Log Scheduler Start" doc:id="log-sched-start" message="[SCHEDULER] Iniciando barrido periodico de ordenes en PENDING_SYNC..." />
+		<ee:transform doc:name="Setup GET Pending Orders Request" doc:id="tf-setup-sched-get-pending">
+			<ee:variables>
+				<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: "GET",
+    path: "/orders?status=PENDING_SYNC&limit=50"
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="Get Pending Orders from DB" doc:id="flow-ref-sched-get-pending" name="client_request_retailDbSysApiSub_Flow"/>
+
+		<choice doc:name="Has Pending Orders?" doc:id="choice-sched-has-pending">
+			<when expression="#[!isEmpty(payload) and (vars.httpStatus default 200) == 200]">
+				<logger level="INFO" doc:name="Log Pending Orders Found" doc:id="log-pending-found" message="#['[SCHEDULER] Se encontraron ' ++ sizeOf(payload) ++ ' ordenes pendientes de sincronizar. Procesando...']" />
+				<foreach doc:name="For Each Pending Order Retry Sync" doc:id="foreach-sched-retry" collection="#[payload]">
+					<set-variable value="#[payload.orderId]" doc:name="Set orderId for Retry" doc:id="set-var-sched-order-id" variableName="orderId" />
+					<logger level="INFO" doc:name="Log Retry Single Order" doc:id="log-retry-single" message="#['[SCHEDULER] Reintentando orden: ' ++ (vars.orderId default '')]" />
+					<flow-ref doc:name="Execute imp-sync-orderSub_Flow" doc:id="flow-ref-sched-exec-sync" name="imp-sync-orderSub_Flow"/>
+				</foreach>
+			</when>
+			<otherwise>
+				<logger level="INFO" doc:name="Log No Pending Orders" doc:id="log-no-pending" message="[SCHEDULER] No hay ordenes en estado PENDING_SYNC. Barrido completado." />
+			</otherwise>
+		</choice>
+	</flow>
+
+</mule>

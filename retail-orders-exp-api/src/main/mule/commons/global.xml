@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+	<global-property doc:name="Global Property mule.env" name="mule.env" value="dev" />
+	<configuration-properties doc:name="Configuration properties" doc:id="d92c191b-dc84-4968-af89-ea4d71c4dde9" file="config/${mule.env}-properties.yaml" />
+
+	<http:request-config name="HTTP_Request_Retail_Orders_PRO_API" doc:name="HTTP Request configuration" doc:id="503bbe73-daa1-4bad-89f8-8427a5156f2d" basePath="${retail-orders-pro-api.http.basePath}" >
+		<http:request-connection protocol="${retail-orders-pro-api.http.protocol}" host="${retail-orders-pro-api.http.host}" port="${retail-orders-pro-api.http.port}" />
+	</http:request-config>
+</mule>

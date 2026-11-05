@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<!-- Propiedades globales por defecto (sobreescribibles por variables de entorno o argumentos JVM) -->
+	<global-property doc:name="Global Property mule.env" name="mule.env" value="dev" />
+	<global-property doc:name="Global Property DB_HOST" name="DB_HOST" value="localhost" />
+	<global-property doc:name="Global Property DB_PORT" name="DB_PORT" value="5432" />
+	<global-property doc:name="Global Property DB_USER" name="DB_USER" value="postgres" />
+	<global-property doc:name="Global Property DB_PASSWORD" name="DB_PASSWORD" value="postgres" />
+	<global-property doc:name="Global Property DB_NAME" name="DB_NAME" value="retail360" />
+
+	<configuration-properties doc:name="Configuration properties" doc:id="a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d" file="config/${mule.env}-properties.yaml" />
+
+	<!-- Configuración del Conector PostgreSQL (System of Record) -->
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="db-config-retail360-001">
+		<db:generic-connection
+			url="jdbc:postgresql://${db.host}:${db.port}/${db.database}"
+			driverClassName="org.postgresql.Driver"
+			user="${db.user}"
+			password="${db.password}" />
+	</db:config>
+
+</mule>

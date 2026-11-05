@@ -1,0 +1,626 @@
+{
+	"info": {
+		"_postman_id": "c1f6b840-7982-4e4a-9b77-retail360skala",
+		"name": "Retail 360 - Skala Evaluación Enterprise (CA-01 a CA-12)",
+		"description": "Colección completa de pruebas de aceptación end-to-end para el Proyecto Integrador Retail 360 evaluado por Skala.\nCubre todos los casos de negocio, validaciones, idempotencia, resiliencia y reportería CSV conforme al RAML oficial.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "CA-01: Consultar Producto Existente (LAP-001)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"pm.test(\"Product details are correct\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.sku).to.eql(\"LAP-001\");",
+							"    pm.expect(jsonData.productName).to.eql(\"Laptop 14 pulgadas\");",
+							"    pm.expect(jsonData.unitPrice).to.eql(18000);",
+							"    pm.expect(jsonData.active).to.eql(true);",
+							"    pm.expect(jsonData.stock).to.be.at.least(1);",
+							"});",
+							"pm.test(\"X-Correlation-ID header present\", function () {",
+							"    pm.response.to.have.header(\"X-Correlation-ID\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-01-postman",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/products/LAP-001",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"products",
+						"LAP-001"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-02: Alta de Orden Exitosa Sincronizada (ORD-1001)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 201 Created o 202 Accepted\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+							"});",
+							"pm.test(\"Order total and syncStatus are correct\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.orderId).to.eql(\"ORD-1001\");",
+							"    pm.expect(jsonData.total).to.eql(37050);",
+							"    pm.expect(jsonData.currency).to.eql(\"MXN\");",
+							"    pm.expect(jsonData.syncStatus).to.be.oneOf([\"SYNCED\", \"PENDING_SYNC\"]);",
+							"});",
+							"pm.test(\"X-Correlation-ID header present\", function () {",
+							"    pm.response.to.have.header(\"X-Correlation-ID\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-02-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1001\",\n  \"customer\": {\n    \"customerId\": \"CUST-001\",\n    \"name\": \"Juan Perez\",\n    \"email\": \"juan.perez@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"LAP-001\",\n      \"quantity\": 2\n    },\n    {\n      \"sku\": \"MOU-001\",\n      \"quantity\": 3\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-03: Consultar Orden Sincronizada (ORD-1001)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"pm.test(\"Order contains items and status\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.orderId).to.eql(\"ORD-1001\");",
+							"    pm.expect(jsonData.syncStatus).to.be.oneOf([\"SYNCED\", \"PENDING_SYNC\"]);",
+							"    pm.expect(jsonData.items.length).to.eql(2);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-03-postman",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders/ORD-1001",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders",
+						"ORD-1001"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-04: Idempotencia - Reintentar Misma Orden (ORD-1001)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 409 Conflict\", function () {",
+							"    pm.response.to.have.status(409);",
+							"});",
+							"pm.test(\"Error code is ORDER_ALREADY_EXISTS\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error.code).to.eql(\"ORDER_ALREADY_EXISTS\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-04-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1001\",\n  \"customer\": {\n    \"customerId\": \"CUST-001\",\n    \"name\": \"Juan Perez\",\n    \"email\": \"juan.perez@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"LAP-001\",\n      \"quantity\": 2\n    },\n    {\n      \"sku\": \"MOU-001\",\n      \"quantity\": 3\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-05: Validación Cantidad <= 0 (ORD-1005-BADQTY)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 400 Bad Request\", function () {",
+							"    pm.response.to.have.status(400);",
+							"});",
+							"pm.test(\"Error code indicates validation error\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error.code).to.be.oneOf([\"INVALID_QUANTITY\", \"VALIDATION_ERROR\", \"BAD_REQUEST\"]);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-05-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1005-BADQTY\",\n  \"customer\": {\n    \"customerId\": \"CUST-002\",\n    \"name\": \"Maria Lopez\",\n    \"email\": \"maria.lopez@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"LAP-001\",\n      \"quantity\": 0\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-06: Validación Producto Inexistente (ORD-1006-NOSKU)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 404 Not Found\", function () {",
+							"    pm.response.to.have.status(404);",
+							"});",
+							"pm.test(\"Error code is PRODUCT_NOT_FOUND\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error.code).to.eql(\"PRODUCT_NOT_FOUND\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-06-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1006-NOSKU\",\n  \"customer\": {\n    \"customerId\": \"CUST-003\",\n    \"name\": \"Carlos Ruiz\",\n    \"email\": \"carlos.ruiz@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"XXX-999\",\n      \"quantity\": 1\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-07: Validación Stock Insuficiente MON-001 (ORD-1007-NOSTOCK)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 409 Conflict\", function () {",
+							"    pm.response.to.have.status(409);",
+							"});",
+							"pm.test(\"Error code is INSUFFICIENT_STOCK\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error.code).to.eql(\"INSUFFICIENT_STOCK\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-07-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1007-NOSTOCK\",\n  \"customer\": {\n    \"customerId\": \"CUST-004\",\n    \"name\": \"Ana Torres\",\n    \"email\": \"ana.torres@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"MON-001\",\n      \"quantity\": 1\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-08: Validación SKUs Duplicados en Pedido (ORD-1008-DUPSKU)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 400 Bad Request\", function () {",
+							"    pm.response.to.have.status(400);",
+							"});",
+							"pm.test(\"Error code is DUPLICATE_SKU\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.error.code).to.eql(\"DUPLICATE_SKU\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-08-postman",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1008-DUPSKU\",\n  \"customer\": {\n    \"customerId\": \"CUST-005\",\n    \"name\": \"David Gomez\",\n    \"email\": \"david.gomez@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"CAM-001\",\n      \"quantity\": 1\n    },\n    {\n      \"sku\": \"CAM-001\",\n      \"quantity\": 2\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-09: Contingencia Salesforce - 202 Accepted & PENDING_SYNC (ORD-1009-CONTINGENCY)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 202 Accepted o 201 Created\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([201, 202]);",
+							"});",
+							"pm.test(\"Order created and preserved in DB\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.orderId).to.eql(\"ORD-1009-CONTINGENCY\");",
+							"    pm.expect(jsonData.syncStatus).to.be.oneOf([\"SYNCED\", \"PENDING_SYNC\"]);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-09-contingency",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1009-CONTINGENCY\",\n  \"customer\": {\n    \"customerId\": \"CUST-006\",\n    \"name\": \"Laura Medina\",\n    \"email\": \"laura.medina@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"CAM-001\",\n      \"quantity\": 1\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-10: Reintento de Sincronización Manual (ORD-1009-CONTINGENCY)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK o 202 Accepted\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+							"});",
+							"pm.test(\"Response reflects sync state\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.orderId).to.eql(\"ORD-1009-CONTINGENCY\");",
+							"    pm.expect(jsonData.syncStatus).to.be.oneOf([\"SYNCED\", \"PENDING_SYNC\"]);",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-10-retry",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{pro_api_base_url}}/internal/v1/orders/ORD-1009-CONTINGENCY/sync",
+					"host": [
+						"{{pro_api_base_url}}"
+					],
+					"path": [
+						"internal",
+						"v1",
+						"orders",
+						"ORD-1009-CONTINGENCY",
+						"sync"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-11: Reporte de Órdenes Consolidado en CSV",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 200 OK\", function () {",
+							"    pm.response.to.have.status(200);",
+							"});",
+							"pm.test(\"Content-Type is text/csv\", function () {",
+							"    pm.response.to.have.header(\"Content-Type\");",
+							"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/csv\");",
+							"});",
+							"pm.test(\"CSV body has headers and rows\", function () {",
+							"    var body = pm.response.text();",
+							"    pm.expect(body).to.include(\"orderId\");",
+							"    pm.expect(body).to.include(\"ORD-1001\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "text/csv",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-11-report-csv",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{exp_api_base_url}}/api/v1/orders/report",
+					"host": [
+						"{{exp_api_base_url}}"
+					],
+					"path": [
+						"api",
+						"v1",
+						"orders",
+						"report"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CA-12: Simular Error Parcial / Rechazo en Líneas de Salesforce (502 / PENDING_SYNC)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"pm.test(\"Status code is 502 Bad Gateway (Direct SF Sys) o 202 PENDING_SYNC\", function () {",
+							"    pm.expect(pm.response.code).to.be.oneOf([502, 400, 202]);",
+							"});",
+							"pm.test(\"No se marca como SYNCED ante error en líneas\", function () {",
+							"    var jsonData = pm.response.json();",
+							"    pm.expect(jsonData.syncStatus).to.not.eql(\"SYNCED\");",
+							"});"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "X-Correlation-ID",
+						"value": "corr-ca-12-partial-error",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"orderId\": \"ORD-1012-PARTIAL\",\n  \"customer\": {\n    \"customerId\": \"CUST-012\",\n    \"name\": \"Pedro Parcial\",\n    \"email\": \"pedro.parcial@example.com\"\n  },\n  \"items\": [\n    {\n      \"sku\": \"LAP-001\",\n      \"quantity\": 1,\n      \"unitPrice\": 18000,\n      \"subtotal\": 18000\n    },\n    {\n      \"sku\": \"LAP-001\",\n      \"quantity\": 1,\n      \"unitPrice\": 18000,\n      \"subtotal\": 18000\n    }\n  ],\n  \"total\": 36000,\n  \"currency\": \"MXN\"\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8084/api/v1/orders/ORD-1012-PARTIAL",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8084",
+					"path": [
+						"api",
+						"v1",
+						"orders",
+						"ORD-1012-PARTIAL"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

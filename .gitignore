@@ -1,0 +1,46 @@
+# =============================================================================
+# .gitignore — Retail 360 Enterprise (MuleSoft 4 + Docker + Salesforce + MCP)
+# =============================================================================
+
+# Compilados de Maven y Runtime de MuleSoft
+**/target/
+**/.mule/
+.mule/
+.metadata/
+.tooling/
+.tooling-apps-cache/
+
+# Archivos de configuración local de Eclipse / Anypoint Studio (no requeridos)
+**/.settings/
+*.log
+*.tmp
+
+# Credenciales locales y archivos de entorno privados
+.env
+*.env
+*-secret*
+local-properties.yaml
+
+# Videos pesados (alojados en YouTube: https://youtu.be/qv3NHCh6BxQ) y empaquetados ZIP
+*.mp4
+*.mkv
+*.mov
+*.zip
+
+# Python cache
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Proyectos de prácticas previas en el mismo workspace local (fuera del alcance de Retail 360)
+order-exp-api/
+poc/
+simulador- Certificacion-Emmanuel-Sanchez/
+simulador-certificacion-emmanuel-sanchez-api/
+skala-customers-sys-api/
+skala-notifications-sys-api/
+skala-orders-exp-api/
+skala-orders-proc-api/
+skala-payments-sys-api/
+

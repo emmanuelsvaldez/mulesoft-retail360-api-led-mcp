@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<sub-flow name="imp-orders-reportSub_Flow" doc:id="8d9f448a-7dd5-49bb-97bc-9b8cd9e2368a" >
+		<ee:transform doc:name="++ request" doc:id="3c956639-04ea-4dd1-9e76-f846206a9ced" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="request" ><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-db-sys-api.http.paths.getOrdersReport.method'),
+    path: p('retail-db-sys-api.http.paths.getOrdersReport.path')
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="client_request_retailDbSysApiSub_Flow" doc:id="82bb48e7-9a1d-482e-90d0-0943e3e185cc" name="client_request_retailDbSysApiSub_Flow"/>
+	</sub-flow>
+
+</mule>

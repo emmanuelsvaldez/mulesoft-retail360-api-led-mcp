@@ -1,0 +1,8 @@
+api:
+  http:
+    port: '8084'
+
+sfdc:
+  clientId: '${SFDC_CLIENT_ID}'
+  clientSecret: '${SFDC_CLIENT_SECRET}'
+  tokenUrl: '${SFDC_TOKEN_URL}'

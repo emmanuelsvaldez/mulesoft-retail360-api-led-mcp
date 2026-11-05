@@ -1,0 +1,10 @@
+api:
+  http:
+    port: '8083'
+
+db:
+  host: '${DB_HOST}'
+  port: '${DB_PORT}'
+  user: '${DB_USER}'
+  password: '${DB_PASSWORD}'
+  database: '${DB_NAME}'

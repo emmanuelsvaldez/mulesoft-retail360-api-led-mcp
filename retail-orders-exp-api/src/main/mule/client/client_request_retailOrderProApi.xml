@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<sub-flow name="client_request_retailOrderProApiSub_Flow" doc:id="ea24653c-ba6b-444b-9d47-48cdc8ff73b5">
+		<try doc:name="Try Request Process API" doc:id="2d70e9ab-ed0d-424d-8b75-569737270df1">
+			<http:request method="#[vars.request.method]" doc:name="Retail Orders Process API" doc:id="a4001054-708a-4866-a1f3-edfdb9eea4a1" config-ref="HTTP_Request_Retail_Orders_PRO_API" path="#[vars.request.path]">
+				<http:headers><![CDATA[#[{
+					"X-Correlation-ID": vars.correlationId default correlationId
+				}]]]></http:headers>
+			</http:request>
+			<set-variable value="#[attributes.statusCode]" doc:name="Propagate HTTP Status" doc:id="set-var-prop-http-status" variableName="httpStatus" />
+			<error-handler>
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="0ff8a388-1d48-4ca5-9cd0-788c4a50aa98" type="ANY">
+					<ee:transform doc:name="Build Dynamic Error Message" doc:id="d460b8db-d622-4522-951b-7570693c81ef">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var downstream = error.errorMessage.payload
+var errId = error.errorType.identifier default "UNKNOWN"
+var code = error.errorMessage.attributes.statusCode default (
+    if (errId == "BAD_REQUEST") 400
+    else if (errId == "NOT_FOUND") 404
+    else if (errId == "CONFLICT") 409
+    else if (errId == "BAD_GATEWAY") 502
+    else if (errId == "TIMEOUT" or errId == "CONNECTIVITY") 503
+    else 500
+)
+---
+if (downstream != null and downstream.error != null) downstream
+else {
+    "success": false,
+    "error": {
+        "code": if (code == 404) "PRODUCT_NOT_FOUND"
+                else if (code == 409) "INSUFFICIENT_STOCK"
+                else if (code == 400) "VALIDATION_ERROR"
+                else if (code == 503) "DEPENDENCY_UNAVAILABLE"
+                else "INTERNAL_ERROR",
+        "message": error.description default "Error al comunicar con Retail Orders Process API",
+        "httpStatus": code,
+        "correlationId": vars.correlationId default correlationId
+    }
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables>
+							<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+output application/java
+var errId = error.errorType.identifier default "UNKNOWN"
+---
+error.errorMessage.attributes.statusCode default (
+    if (errId == "BAD_REQUEST") 400
+    else if (errId == "NOT_FOUND") 404
+    else if (errId == "CONFLICT") 409
+    else if (errId == "BAD_GATEWAY") 502
+    else if (errId == "TIMEOUT" or errId == "CONNECTIVITY") 503
+    else 500
+)]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+</mule>

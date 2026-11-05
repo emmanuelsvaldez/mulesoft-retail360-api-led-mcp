@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
+
+	<global-property doc:name="Global Property mule.env" name="mule.env" value="dev" />
+	<global-property doc:name="Global Property SFDC_CLIENT_ID" name="SFDC_CLIENT_ID" value="YOUR_SFDC_CLIENT_ID" />
+	<global-property doc:name="Global Property SFDC_CLIENT_SECRET" name="SFDC_CLIENT_SECRET" value="YOUR_SFDC_CLIENT_SECRET" />
+	<global-property doc:name="Global Property SFDC_TOKEN_URL" name="SFDC_TOKEN_URL" value="https://your-domain.develop.my.salesforce.com/services/oauth2/token" />
+
+	<configuration-properties doc:name="Configuration properties" doc:id="e149eae3-4d15-4b00-b1d1-037138534f3b" file="config/${mule.env}-properties.yaml" />
+
+	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config" doc:id="sfdc-config-retail360">
+		<salesforce:oauth-client-credentials-connection>
+			<salesforce:oauth-client-credentials
+				clientId="${sfdc.clientId}"
+				clientSecret="${sfdc.clientSecret}"
+				tokenUrl="${sfdc.tokenUrl}" />
+		</salesforce:oauth-client-credentials-connection>
+	</salesforce:sfdc-config>
+
+</mule>

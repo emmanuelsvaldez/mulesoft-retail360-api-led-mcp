@@ -1,0 +1,12 @@
+api:
+  http:
+    port: '8082'
+    
+    
+retail-orders-pro-api:
+  http:
+    protocol: 'HTTP'
+    host: ''
+    basePath: ''
+    paths:
+        createOrders: '/orders'

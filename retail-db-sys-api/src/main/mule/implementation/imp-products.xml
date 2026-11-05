@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<sub-flow name="imp-get-product-by-skuSub_Flow" doc:id="b1001054-708a-4866-a1f3-edfdb9eea4d1">
+		<db:select doc:name="SELECT Product by SKU" doc:id="db-select-product-001" config-ref="Database_Config">
+			<db:sql><![CDATA[SELECT sku, product_name, unit_price, stock, active
+FROM products
+WHERE sku = :sku]]></db:sql>
+			<db:input-parameters><![CDATA[#[{
+	sku: vars.sku
+}]]]></db:input-parameters>
+		</db:select>
+		<choice doc:name="Product Exists?" doc:id="choice-product-exists-001">
+			<when expression="#[!isEmpty(payload)]">
+				<ee:transform doc:name="Map Product Response (200)" doc:id="b2001054-708a-4866-a1f3-edfdb9eea4d1">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var row = payload[0]
+---
+{
+  sku: row.sku,
+  productName: row.product_name,
+  unitPrice: row.unit_price as Number,
+  stock: row.stock as Number,
+  active: row.active as Boolean
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<ee:transform doc:name="Product Not Found (404)" doc:id="tf-product-not-found-404">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "PRODUCT_NOT_FOUND",
+    message: "El producto solicitado no existe: " ++ (vars.sku default ""),
+    httpStatus: 404,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+</mule>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+	<global-property doc:name="Global Property mule.env" name="mule.env" value="dev" />
+	<configuration-properties doc:name="Configuration properties" doc:id="23edabd3-721c-4931-9e31-7a381514b63a" file="config/${mule.env}-properties.yaml" />
+
+	<http:request-config name="HTTP_Request_Retail_DB_SYS_API" doc:name="HTTP Request configuration DB SYS API" doc:id="58471be3-2451-4646-81c4-97e02267ebf0" basePath="${retail-db-sys-api.http.basePath}" >
+		<http:request-connection protocol="${retail-db-sys-api.http.protocol}" host="${retail-db-sys-api.http.host}" port="${retail-db-sys-api.http.port}" />
+	</http:request-config>
+
+	<http:request-config name="HTTP_Request_Retail_Salesforce_SYS_API" doc:name="HTTP Request configuration Salesforce SYS API" doc:id="1bc35715-d3cf-43fb-93d7-83cf104d064a" basePath="${retail-salesforce-sys-api.http.basePath}" >
+		<http:request-connection protocol="${retail-salesforce-sys-api.http.protocol}" host="${retail-salesforce-sys-api.http.host}" port="${retail-salesforce-sys-api.http.port}" />
+	</http:request-config>
+
+</mule>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<sub-flow name="imp-orders-reportSub_Flow" doc:id="cc136146-6c77-4bc4-866a-5e686b2e0daf">
+		<ee:transform doc:name="Setup GET Orders Report Request" doc:id="254ca784-f48f-47aa-a0ca-4ee9620fe96c">
+			<ee:variables>
+				<ee:set-variable variableName="request"><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+	method: p('retail-orders-pro-api.http.paths.getOrdersReport.method'),
+	path: p('retail-orders-pro-api.http.paths.getOrdersReport.path')
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="client_request_retailOrderProApiSub_Flow" doc:id="3ded5d59-08ff-4efb-bb0b-a1211c019874" name="client_request_retailOrderProApiSub_Flow"/>
+
+		<!-- Solo transformar a CSV si la respuesta fue exitosa (200 OK) -->
+		<choice doc:name="Check Report Status 200" doc:id="choice-report-status-200">
+			<when expression="#[(vars.httpStatus default 200) == 200]">
+				<ee:transform doc:name="Build CSV Response" doc:id="9d237375-ca79-4d96-bd76-647e492b76c9">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/csv header=true, separator=","
+---
+(payload default []) map (order) -> {
+	orderId: order.orderId default "",
+	customerId: order.customerId default "",
+	total: order.total default 0,
+	syncStatus: order.syncStatus default "",
+	createdAt: order.createdAt default ""
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="outboundHeaders"><![CDATA[output application/java
+---
+(vars.outboundHeaders default {}) ++ {
+    "Content-Type": "text/csv; charset=UTF-8"
+}]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+		</choice>
+	</sub-flow>
+</mule>

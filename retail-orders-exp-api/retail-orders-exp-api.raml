@@ -1,0 +1,414 @@
+#%RAML 1.0
+title: Retail 360 - Orders Experience API
+version: v1
+protocols:
+  - HTTP
+baseUri: http://localhost:8081/api/v1
+mediaType: application/json
+description: 'API publica para clientes retail.
+  Expone creacion, consulta y reportes CSV de ordenes.
+  '
+types:
+  Customer:
+    type: object
+    additionalProperties: false
+    properties:
+      customerId:
+        type: string
+        minLength: 1
+        maxLength: 50
+        example: CUS-001
+      name:
+        type: string
+        minLength: 2
+        maxLength: 120
+        example: Juan Perez
+      email:
+        type: string
+        maxLength: 150
+        pattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+        example: juan@example.com
+  Shipping:
+    type: object
+    additionalProperties: false
+    properties:
+      city?:
+        type: string
+        maxLength: 100
+      postalCode?:
+        type: string
+        maxLength: 15
+  OrderItem:
+    type: object
+    additionalProperties: false
+    properties:
+      sku:
+        type: string
+        minLength: 1
+        maxLength: 30
+        example: LAP-001
+      quantity:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        example: 2
+  OrderRequest:
+    type: object
+    additionalProperties: false
+    properties:
+      orderId:
+        type: string
+        minLength: 3
+        maxLength: 50
+        example: ORD-1001
+      customer: Customer
+      items:
+        type: array
+        minItems: 1
+        maxItems: 100
+        items: OrderItem
+      shipping?: Shipping
+  OrderLine:
+    type: object
+    additionalProperties: false
+    properties:
+      sku:
+        type: string
+        minLength: 1
+        maxLength: 30
+      quantity:
+        type: integer
+        minimum: 1
+      unitPrice:
+        type: number
+        minimum: 0
+      subtotal:
+        type: number
+        minimum: 0
+  Product:
+    type: object
+    additionalProperties: false
+    properties:
+      sku: string
+      productName: string
+      unitPrice:
+        type: number
+        minimum: 0
+      stock:
+        type: integer
+        minimum: 0
+      active: boolean
+  OrderResponse:
+    type: object
+    additionalProperties: false
+    properties:
+      orderId: string
+      status:
+        type: string
+        enum:
+        - CREATED
+      syncStatus:
+        type: string
+        enum:
+        - PENDING_SYNC
+        - SYNCED
+        - SYNC_ERROR
+      total:
+        type: number
+        minimum: 0
+      currency:
+        type: string
+        enum:
+        - MXN
+      customer?: Customer
+      items?:
+        type: array
+        items: OrderLine
+      salesforceId?: string
+      syncAttempts?:
+        type: integer
+        minimum: 0
+      lastSyncError?:
+        type: string | nil
+      createdAt?: datetime
+      updatedAt?: datetime
+      message?: string
+      correlationId?: string
+  ErrorResponse:
+    type: object
+    additionalProperties: false
+    properties:
+      success: boolean
+      error:
+        type: object
+        additionalProperties: false
+        properties:
+          code: string
+          message: string
+          httpStatus: integer
+          correlationId: string
+          details?:
+            type: array
+            items: string
+/orders:
+  post:
+    displayName: Crear orden
+    description: 'Registra la orden de forma atomica en PostgreSQL, y solicita sincronizacion Salesforce.
+      Devuelve 201 si ya esta SYNCED; 202 si fue persistida y esta PENDING_SYNC.
+      La validacion de SKU unico por orden y el control transaccional de existencias son
+      reglas de negocio implementadas en Process/System, no solo validaciones RAML.
+      '
+    headers:
+      X-Correlation-ID?: string
+    body:
+      application/json:
+        type: OrderRequest
+        example:
+          orderId: ORD-1001
+          customer:
+            customerId: CUS-001
+            name: Juan Perez
+            email: juan@example.com
+          items:
+          - sku: LAP-001
+            quantity: 2
+          - sku: MOU-001
+            quantity: 3
+          shipping:
+            city: Queretaro
+            postalCode: '76000'
+    responses:
+      201:
+        body:
+          application/json:
+            type: OrderResponse
+            example:
+              orderId: ORD-1001
+              status: CREATED
+              syncStatus: SYNCED
+              total: 37050.0
+              currency: MXN
+              salesforceId: a00000000000000AAA
+              items:
+              - sku: LAP-001
+                quantity: 2
+                unitPrice: 18000.0
+                subtotal: 36000.0
+              - sku: MOU-001
+                quantity: 3
+                unitPrice: 350.0
+                subtotal: 1050.0
+              message: Orden registrada y sincronizada con Salesforce.
+      202:
+        body:
+          application/json:
+            type: OrderResponse
+            example:
+              orderId: ORD-1001
+              status: CREATED
+              syncStatus: PENDING_SYNC
+              total: 37050.0
+              currency: MXN
+              items:
+              - sku: LAP-001
+                quantity: 2
+                unitPrice: 18000.0
+                subtotal: 36000.0
+              - sku: MOU-001
+                quantity: 3
+                unitPrice: 350.0
+                subtotal: 1050.0
+              message: Orden guardada en PostgreSQL; sincronizacion con Salesforce pendiente.
+      400:
+        body:
+          application/json:
+            type: ErrorResponse
+            example:
+              success: false
+              error:
+                code: VALIDATION_ERROR
+                message: La solicitud contiene datos invalidos.
+                httpStatus: 400
+                correlationId: demo-7f3a9c
+      404:
+        body:
+          application/json:
+            type: ErrorResponse
+            example:
+              success: false
+              error:
+                code: PRODUCT_NOT_FOUND
+                message: El producto solicitado no existe.
+                httpStatus: 404
+                correlationId: demo-7f3a9c
+      409:
+        body:
+          application/json:
+            type: ErrorResponse
+            example:
+              success: false
+              error:
+                code: INSUFFICIENT_STOCK
+                message: Inventario insuficiente para completar la orden.
+                httpStatus: 409
+                correlationId: demo-7f3a9c
+      503:
+        body:
+          application/json:
+            type: ErrorResponse
+            example:
+              success: false
+              error:
+                code: DEPENDENCY_UNAVAILABLE
+                message: No fue posible establecer conexion con el sistema dependiente.
+                httpStatus: 503
+                correlationId: demo-7f3a9c
+      500:
+        body:
+          application/json:
+            type: ErrorResponse
+            example:
+              success: false
+              error:
+                code: INTERNAL_ERROR
+                message: Ocurrio un error inesperado.
+                httpStatus: 500
+                correlationId: demo-7f3a9c
+  /report:
+    get:
+      displayName: Descargar reporte CSV
+      description: Obtiene un reporte agregado de ordenes; la transformacion JSON a CSV se realiza en
+        Experience.
+      responses:
+        200:
+          body:
+            text/csv:
+              type: string
+              example: 'orderId,customerId,total,syncStatus,createdAt
+                ORD-1001,CUS-001,37050.00,SYNCED,2026-10-26T10:00:00Z
+                '
+        503:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: No fue posible establecer conexion con el sistema dependiente.
+                  httpStatus: 503
+                  correlationId: demo-7f3a9c
+        500:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: Ocurrio un error inesperado.
+                  httpStatus: 500
+                  correlationId: demo-7f3a9c
+  /{orderId}:
+    uriParameters:
+      orderId:
+        type: string
+        minLength: 3
+        maxLength: 50
+        example: ORD-1001
+    get:
+      displayName: Consultar orden y estado de sincronizacion
+      responses:
+        200:
+          body:
+            application/json:
+              type: OrderResponse
+              example:
+                orderId: ORD-1001
+                status: CREATED
+                syncStatus: SYNCED
+                total: 37050.0
+                currency: MXN
+                customer:
+                  customerId: CUS-001
+                  name: Juan Perez
+                  email: juan@example.com
+                salesforceId: a00000000000000AAA
+                syncAttempts: 1
+                items:
+                - sku: LAP-001
+                  quantity: 2
+                  unitPrice: 18000.0
+                  subtotal: 36000.0
+                - sku: MOU-001
+                  quantity: 3
+                  unitPrice: 350.0
+                  subtotal: 1050.0
+                createdAt: '2026-10-26T10:00:00Z'
+                updatedAt: '2026-10-26T10:00:02Z'
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: PRODUCT_NOT_FOUND
+                  message: El producto solicitado no existe.
+                  httpStatus: 404
+                  correlationId: demo-7f3a9c
+        503:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: No fue posible establecer conexion con el sistema dependiente.
+                  httpStatus: 503
+                  correlationId: demo-7f3a9c
+/products:
+  /{sku}:
+    uriParameters:
+      sku:
+        type: string
+        minLength: 1
+        maxLength: 30
+        example: LAP-001
+    get:
+      displayName: Consultar producto desde Experience
+      description: Endpoint didactico que atraviesa Experience, Process y Database System.
+      responses:
+        200:
+          body:
+            application/json:
+              type: Product
+              example:
+                sku: LAP-001
+                productName: Laptop 14 pulgadas
+                unitPrice: 18000.0
+                stock: 12
+                active: true
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: PRODUCT_NOT_FOUND
+                  message: El producto solicitado no existe.
+                  httpStatus: 404
+                  correlationId: demo-7f3a9c
+        503:
+          body:
+            application/json:
+              type: ErrorResponse
+              example:
+                success: false
+                error:
+                  code: DEPENDENCY_UNAVAILABLE
+                  message: No fue posible establecer conexion con el sistema dependiente.
+                  httpStatus: 503
+                  correlationId: demo-7f3a9c

@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd ">
+    <http:listener-config name="retail-db-sys-api-httpListenerConfig">
+        <http:listener-connection host="0.0.0.0" port="${api.http.port}" />
+    </http:listener-config>
+    <apikit:config name="retail-db-sys-api-config" api="resource::876dba8c-1a93-41e2-ba53-3af65c408406:retail-db-sys-api:1.0.0:raml:zip:retail-db-sys-api.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
+
+    <!-- Listener Principal (/api/v1/* según baseUri RAML) -->
+    <flow name="retail-db-sys-api-main">
+        <http:listener config-ref="retail-db-sys-api-httpListenerConfig" path="/api/v1/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref doc:name="retail-db-sys-api-routerSub_Flow" name="retail-db-sys-api-routerSub_Flow" />
+    </flow>
+
+    <!-- Listener Alias (/api/* para retrocompatibilidad) -->
+    <flow name="retail-db-sys-api-main-legacy">
+        <http:listener config-ref="retail-db-sys-api-httpListenerConfig" path="/api/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref doc:name="retail-db-sys-api-routerSub_Flow" name="retail-db-sys-api-routerSub_Flow" />
+    </flow>
+
+    <sub-flow name="retail-db-sys-api-routerSub_Flow">
+        <ee:transform doc:name="Init CorrelationId">
+            <ee:variables>
+                <ee:set-variable variableName="correlationId"><![CDATA[attributes.headers.'x-correlation-id' default correlationId]]></ee:set-variable>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[output application/java
+---
+{
+    "X-Correlation-ID": attributes.headers.'x-correlation-id' default correlationId
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <try doc:name="Try APIKit Router">
+            <apikit:router config-ref="retail-db-sys-api-config" />
+            <error-handler>
+                <on-error-continue type="APIKIT:BAD_REQUEST">
+                    <ee:transform doc:name="400 VALIDATION_ERROR">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "VALIDATION_ERROR",
+    message: error.description default "La solicitud contiene datos invalidos.",
+    httpStatus: 400,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">400</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="APIKIT:NOT_FOUND">
+                    <ee:transform doc:name="404 RESOURCE_NOT_FOUND">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "RESOURCE_NOT_FOUND",
+    message: "El recurso solicitado no existe.",
+    httpStatus: 404,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">404</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="APIKIT:METHOD_NOT_ALLOWED">
+                    <ee:transform doc:name="405 METHOD_NOT_ALLOWED">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "METHOD_NOT_ALLOWED",
+    message: "Metodo HTTP no permitido.",
+    httpStatus: 405,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">405</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="DB:CONNECTIVITY">
+                    <ee:transform doc:name="503 DEPENDENCY_UNAVAILABLE">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "DEPENDENCY_UNAVAILABLE",
+    message: "No fue posible establecer conexion con PostgreSQL.",
+    httpStatus: 503,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">503</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="ANY">
+                    <ee:transform doc:name="500 INTERNAL_ERROR">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "INTERNAL_ERROR",
+    message: error.description default "Ocurrio un error inesperado en Database System API.",
+    httpStatus: 500,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">500</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <flow name="retail-db-sys-api-console">
+        <http:listener config-ref="retail-db-sys-api-httpListenerConfig" path="/console/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:console config-ref="retail-db-sys-api-config" />
+    </flow>
+
+    <flow name="patch:\orders\(orderId)\sync:application\json:retail-db-sys-api-config">
+        <ee:transform doc:name="Extract orderId">
+            <ee:variables>
+                <ee:set-variable variableName="orderId">attributes.uriParams.'orderId'</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Actualizando sincronizacion Salesforce para orden: #[vars.orderId]" />
+        <flow-ref doc:name="imp-patch-order-syncSub_Flow" name="imp-patch-order-syncSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Sincronizacion actualizada en PostgreSQL para orden: #[vars.orderId]" />
+    </flow>
+
+    <flow name="get:\orders:retail-db-sys-api-config">
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Listando ordenes por estado en PostgreSQL" />
+        <flow-ref doc:name="imp-get-orders-by-statusSub_Flow" name="imp-get-orders-by-statusSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Ordenes listadas exitosamente" />
+    </flow>
+
+    <flow name="get:\orders\report:retail-db-sys-api-config">
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Consultando reporte de ordenes en PostgreSQL" />
+        <flow-ref doc:name="imp-get-orders-reportSub_Flow" name="imp-get-orders-reportSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Reporte de ordenes consultado exitosamente" />
+    </flow>
+
+    <flow name="get:\orders\(orderId):retail-db-sys-api-config">
+        <ee:transform doc:name="Extract orderId">
+            <ee:variables>
+                <ee:set-variable variableName="orderId">attributes.uriParams.'orderId'</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Obteniendo orden persistida: #[vars.orderId]" />
+        <flow-ref doc:name="imp-get-order-by-idSub_Flow" name="imp-get-order-by-idSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Orden persistida obtenida: #[vars.orderId]" />
+    </flow>
+
+    <flow name="get:\products\(sku):retail-db-sys-api-config">
+        <ee:transform doc:name="Extract sku">
+            <ee:variables>
+                <ee:set-variable variableName="sku">attributes.uriParams.'sku'</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Consultando articulo en PostgreSQL: #[vars.sku]" />
+        <flow-ref doc:name="imp-get-product-by-skuSub_Flow" name="imp-get-product-by-skuSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Articulo consultado: #[vars.sku]" />
+    </flow>
+
+    <flow name="post:\orders:application\json:retail-db-sys-api-config">
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Guardando orden transaccional en PostgreSQL: #[payload.orderId default '']" />
+        <flow-ref doc:name="imp-create-orderSub_Flow" name="imp-create-orderSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Fin de transaccion de orden en PostgreSQL (HTTP #[vars.httpStatus default 201])" />
+    </flow>
+</mule>

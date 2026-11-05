@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="con" path="MULE_LIB/com.mulesoft.connectors/mule-mcp-connector/1.2.0"/>
+	<classpathentry kind="con" path="MULE_LIB/org.mule.connectors/mule-sockets-connector/1.2.9"/>
+	<classpathentry kind="con" path="MULE_LIB/org.mule.connectors/mule-http-connector/1.11.3"/>
+	<classpathentry kind="src" path=""/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>

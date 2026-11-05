@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<!-- ============================================================================ -->
+	<!-- 1. Obtener orden persistida por ID (GET /orders/{orderId})                   -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-get-order-by-idSub_Flow" doc:id="dd076d08-8d78-4913-bd21-9af02821d0b0">
+		<db:select doc:name="SELECT Order Header" doc:id="db-select-order-header-001" config-ref="Database_Config" target="orderHeader">
+			<db:sql><![CDATA[SELECT order_id, customer_id, customer_name, customer_email,
+       status, sync_status, total, currency, salesforce_id,
+       sync_attempts, last_sync_error, created_at, updated_at
+FROM retail_orders
+WHERE order_id = :orderId]]></db:sql>
+			<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId
+}]]]></db:input-parameters>
+		</db:select>
+		<choice doc:name="Order Exists?" doc:id="choice-order-exists-001">
+			<when expression="#[!isEmpty(vars.orderHeader)]">
+				<db:select doc:name="SELECT Order Items" doc:id="db-select-order-items-001" config-ref="Database_Config" target="orderItems">
+					<db:sql><![CDATA[SELECT sku, quantity, unit_price, subtotal
+FROM retail_order_items
+WHERE order_id = :orderId
+ORDER BY id ASC]]></db:sql>
+					<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId
+}]]]></db:input-parameters>
+				</db:select>
+				<ee:transform doc:name="Build OrderResponse (200)" doc:id="f23dacf4-f33d-44a4-a783-de03dba82c4b">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json skipNullOn="everywhere"
+var h = vars.orderHeader[0]
+---
+{
+  orderId: h.order_id,
+  status: h.status,
+  syncStatus: h.sync_status,
+  total: h.total as Number,
+  currency: h.currency,
+  customer: {
+    customerId: h.customer_id,
+    name: h.customer_name,
+    email: h.customer_email
+  },
+  salesforceId: h.salesforce_id,
+  syncAttempts: h.sync_attempts as Number,
+  lastSyncError: h.last_sync_error,
+  items: (vars.orderItems default []) map (item) -> {
+    sku: item.sku,
+    quantity: item.quantity as Number,
+    unitPrice: item.unit_price as Number,
+    subtotal: item.subtotal as Number
+  },
+  createdAt: (h.created_at as DateTime default now()) >> "UTC",
+  updatedAt: (h.updated_at as DateTime default now()) >> "UTC"
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<ee:transform doc:name="Order Not Found (404)" doc:id="tf-order-not-found-404">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "ORDER_NOT_FOUND",
+    message: "La orden solicitada no existe: " ++ (vars.orderId default ""),
+    httpStatus: 404,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 2. Listar órdenes por estado (GET /orders?status=PENDING_SYNC&limit=50)      -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-get-orders-by-statusSub_Flow" doc:id="c87adcb7-e189-447d-b891-da2ba17d673b">
+		<ee:transform doc:name="Extract Query Params" doc:id="tf-extract-query-params-001">
+			<ee:variables>
+				<ee:set-variable variableName="queryStatus"><![CDATA[attributes.queryParams.status default "PENDING_SYNC"]]></ee:set-variable>
+				<ee:set-variable variableName="queryLimit"><![CDATA[(attributes.queryParams.limit default 50) as Number]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<db:select doc:name="SELECT Orders by Sync Status" doc:id="db-select-orders-by-status-001" config-ref="Database_Config">
+			<db:sql><![CDATA[SELECT order_id, customer_id, customer_name, customer_email,
+       status, sync_status, total, currency, salesforce_id,
+       sync_attempts, last_sync_error, created_at, updated_at
+FROM retail_orders
+WHERE sync_status = :status
+ORDER BY created_at ASC
+LIMIT :limitRows]]></db:sql>
+			<db:input-parameters><![CDATA[#[{
+	status: vars.queryStatus,
+	limitRows: vars.queryLimit
+}]]]></db:input-parameters>
+		</db:select>
+		<ee:transform doc:name="Build Orders List Response" doc:id="1c06204b-cc87-4522-9630-3dcf5694503b">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json skipNullOn="everywhere"
+---
+payload map (row) -> {
+  orderId: row.order_id,
+  status: row.status,
+  syncStatus: row.sync_status,
+  total: row.total as Number,
+  currency: row.currency,
+  customer: {
+    customerId: row.customer_id,
+    name: row.customer_name,
+    email: row.customer_email
+  },
+  salesforceId: row.salesforce_id,
+  syncAttempts: row.sync_attempts as Number,
+  lastSyncError: row.last_sync_error,
+  createdAt: (row.created_at as DateTime default now()) >> "UTC",
+  updatedAt: (row.updated_at as DateTime default now()) >> "UTC"
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 3. Guardar orden en PostgreSQL y descontar inventario (POST /orders)         -->
+	<!--    Transacción Local Atómica ALWAYS_BEGIN con Rollback ante cualquier fallo  -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-create-orderSub_Flow" doc:id="c85058b7-a352-43e0-86ed-06d5b8594e71">
+		<ee:transform doc:name="Init Order Variables" doc:id="tf-init-order-vars-001">
+			<ee:variables>
+				<ee:set-variable variableName="orderReq"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+				<ee:set-variable variableName="orderId"><![CDATA[payload.orderId]]></ee:set-variable>
+				<ee:set-variable variableName="enrichedItems"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+				<ee:set-variable variableName="hasDuplicateSkus"><![CDATA[%dw 2.0
+output application/java
+var skus = payload.items.*sku default []
+---
+sizeOf(skus) != sizeOf(skus distinctBy $)]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+
+		<choice doc:name="Validate Duplicate SKUs" doc:id="choice-validate-dup-skus-db">
+			<when expression="#[vars.hasDuplicateSkus == true]">
+				<ee:transform doc:name="Duplicate SKU Error (400)" doc:id="tf-dup-sku-error-400">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "DUPLICATE_SKU",
+    message: "No se permiten SKUs duplicados dentro de la misma orden.",
+    httpStatus: 400,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</when>
+			<otherwise>
+				<try doc:name="Outer Try Error Mapper" doc:id="try-outer-order-mapper">
+					<try doc:name="Atomic PostgreSQL Transaction" doc:id="try-atomic-pg-tx" transactionalAction="ALWAYS_BEGIN">
+						<!-- 3.1. Verificar idempotencia de orderId (RF-05, CA-04) -->
+						<db:select doc:name="Check Existing OrderId" doc:id="db-check-existing-order" config-ref="Database_Config" transactionalAction="ALWAYS_JOIN" target="existingOrder">
+							<db:sql><![CDATA[SELECT order_id FROM retail_orders WHERE order_id = :orderId]]></db:sql>
+							<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId
+}]]]></db:input-parameters>
+						</db:select>
+						<choice doc:name="Order Already Exists?" doc:id="choice-order-already-exists">
+							<when expression="#[!isEmpty(vars.existingOrder)]">
+								<raise-error doc:name="Raise ORDER_ALREADY_EXISTS (409)" doc:id="raise-order-exists" type="APP:ORDER_ALREADY_EXISTS" description="#['La orden ' ++ vars.orderId ++ ' ya existe en PostgreSQL.']" />
+							</when>
+						</choice>
+
+						<!-- 3.2. Validar cada producto, precio oficial y descontar stock (RF-03, RF-04, CA-06, CA-07) -->
+						<foreach doc:name="For Each Order Item" doc:id="foreach-order-item-tx" collection="#[vars.orderReq.items]">
+							<set-variable value="#[payload]" doc:name="Set currentItem" doc:id="set-var-current-item" variableName="currentItem" />
+							<db:select doc:name="SELECT Product FOR UPDATE" doc:id="db-select-prod-for-update" config-ref="Database_Config" transactionalAction="ALWAYS_JOIN" target="dbProduct">
+								<db:sql><![CDATA[SELECT sku, product_name, unit_price, stock, active
+FROM products
+WHERE sku = :sku
+FOR UPDATE]]></db:sql>
+								<db:input-parameters><![CDATA[#[{
+	sku: vars.currentItem.sku
+}]]]></db:input-parameters>
+							</db:select>
+
+							<choice doc:name="Validate Product &amp; Stock" doc:id="choice-validate-prod-stock">
+								<when expression="#[isEmpty(vars.dbProduct)]">
+									<raise-error doc:name="Raise PRODUCT_NOT_FOUND (404)" doc:id="raise-prod-not-found" type="APP:PRODUCT_NOT_FOUND" description="#['El producto solicitado no existe: ' ++ vars.currentItem.sku]" />
+								</when>
+								<when expression="#[!(vars.dbProduct[0].active as Boolean)]">
+									<raise-error doc:name="Raise PRODUCT_INACTIVE (400)" doc:id="raise-prod-inactive" type="APP:PRODUCT_INACTIVE" description="#['El producto solicitado esta inactivo: ' ++ vars.currentItem.sku]" />
+								</when>
+								<when expression="#[(vars.dbProduct[0].stock as Number) &lt; (vars.currentItem.quantity as Number)]">
+									<raise-error doc:name="Raise INSUFFICIENT_STOCK (409)" doc:id="raise-insufficient-stock" type="APP:INSUFFICIENT_STOCK" description="#['Inventario insuficiente para completar la orden en el SKU: ' ++ vars.currentItem.sku]" />
+								</when>
+								<otherwise>
+									<db:update doc:name="UPDATE Deduct Stock Conditional" doc:id="db-update-deduct-stock" config-ref="Database_Config" transactionalAction="ALWAYS_JOIN" target="updStockResult">
+										<db:sql><![CDATA[UPDATE products
+SET stock = stock - :quantity,
+    updated_at = CURRENT_TIMESTAMP
+WHERE sku = :sku AND stock >= :quantity]]></db:sql>
+										<db:input-parameters><![CDATA[#[{
+	sku: vars.currentItem.sku,
+	quantity: vars.currentItem.quantity as Number
+}]]]></db:input-parameters>
+									</db:update>
+									<choice doc:name="Verify Stock Deducted" doc:id="choice-verify-stock-deducted">
+										<when expression="#[(vars.updStockResult.affectedRows default 0) == 0]">
+											<raise-error doc:name="Raise INSUFFICIENT_STOCK (409)" doc:id="raise-insufficient-stock-2" type="APP:INSUFFICIENT_STOCK" description="#['No se pudo descontar stock para el SKU: ' ++ vars.currentItem.sku]" />
+										</when>
+									</choice>
+									<ee:transform doc:name="Append Enriched Line" doc:id="tf-append-enriched-line">
+										<ee:variables>
+											<ee:set-variable variableName="enrichedItems"><![CDATA[%dw 2.0
+output application/java
+var unitPrice = vars.dbProduct[0].unit_price as Number
+var qty = vars.currentItem.quantity as Number
+---
+vars.enrichedItems + {
+  sku: vars.currentItem.sku,
+  quantity: qty,
+  unitPrice: unitPrice,
+  subtotal: (qty * unitPrice) as Number
+}]]></ee:set-variable>
+										</ee:variables>
+									</ee:transform>
+								</otherwise>
+							</choice>
+						</foreach>
+
+						<!-- 3.3. Calcular total e insertar cabecera y líneas dentro de la misma transacción -->
+						<ee:transform doc:name="Calculate Order Total" doc:id="tf-calc-order-total">
+							<ee:variables>
+								<ee:set-variable variableName="orderTotal"><![CDATA[%dw 2.0
+output application/java
+---
+sum(vars.enrichedItems.subtotal default [0]) as Number]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+
+						<db:insert doc:name="INSERT Order Header" doc:id="db-insert-order-header" config-ref="Database_Config" transactionalAction="ALWAYS_JOIN">
+							<db:sql><![CDATA[INSERT INTO retail_orders (
+    order_id, customer_id, customer_name, customer_email,
+    status, sync_status, total, currency, sync_attempts
+) VALUES (
+    :orderId, :customerId, :customerName, :customerEmail,
+    'CREATED', 'PENDING_SYNC', :total, 'MXN', 0
+)]]></db:sql>
+							<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId,
+	customerId: vars.orderReq.customer.customerId,
+	customerName: vars.orderReq.customer.name,
+	customerEmail: vars.orderReq.customer.email,
+	total: vars.orderTotal
+}]]]></db:input-parameters>
+						</db:insert>
+
+						<foreach doc:name="For Each Enriched Line INSERT" doc:id="foreach-insert-order-line" collection="#[vars.enrichedItems]">
+							<db:insert doc:name="INSERT Order Line" doc:id="db-insert-order-line" config-ref="Database_Config" transactionalAction="ALWAYS_JOIN">
+								<db:sql><![CDATA[INSERT INTO retail_order_items (
+    order_id, sku, quantity, unit_price, subtotal
+) VALUES (
+    :orderId, :sku, :quantity, :unitPrice, :subtotal
+)]]></db:sql>
+								<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId,
+	sku: payload.sku,
+	quantity: payload.quantity,
+	unitPrice: payload.unitPrice,
+	subtotal: payload.subtotal
+}]]]></db:input-parameters>
+							</db:insert>
+						</foreach>
+
+						<ee:transform doc:name="Build Created OrderResponse (201)" doc:id="7f36dc82-9562-4af6-99e0-836ddf895d76">
+							<ee:message>
+								<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  orderId: vars.orderId,
+  status: "CREATED",
+  syncStatus: "PENDING_SYNC",
+  total: vars.orderTotal as Number,
+  currency: "MXN",
+  customer: vars.orderReq.customer,
+  items: vars.enrichedItems,
+  syncAttempts: 0,
+  createdAt: now() >> "UTC",
+  updatedAt: now() >> "UTC",
+  message: "Orden guardada en PostgreSQL; sincronizacion con Salesforce pendiente."
+}]]></ee:set-payload>
+							</ee:message>
+							<ee:variables>
+								<ee:set-variable variableName="httpStatus"><![CDATA[201]]></ee:set-variable>
+							</ee:variables>
+						</ee:transform>
+
+						<error-handler>
+							<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate (Triggers DB Rollback)" doc:id="on-err-prop-rollback" type="ANY" />
+						</error-handler>
+					</try>
+
+					<error-handler>
+						<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue - Map Domain Errors" doc:id="on-err-cont-domain-mapper" type="ANY">
+							<ee:transform doc:name="Map Transactional Error to ErrorResponse" doc:id="tf-map-tx-error">
+								<ee:message>
+									<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var errId = error.errorType.identifier default "INTERNAL_ERROR"
+var status = if (errId == "PRODUCT_NOT_FOUND") 404
+             else if (errId == "PRODUCT_INACTIVE") 400
+             else if (errId == "ORDER_ALREADY_EXISTS" or errId == "INSUFFICIENT_STOCK") 409
+             else if (errId == "CONNECTIVITY") 503
+             else 500
+---
+{
+  success: false,
+  error: {
+    code: errId,
+    message: error.description default "Error procesando la transaccion en PostgreSQL.",
+    httpStatus: status,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+								</ee:message>
+								<ee:variables>
+									<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+output application/java
+var errId = error.errorType.identifier default "INTERNAL_ERROR"
+---
+if (errId == "PRODUCT_NOT_FOUND") 404
+else if (errId == "PRODUCT_INACTIVE") 400
+else if (errId == "ORDER_ALREADY_EXISTS" or errId == "INSUFFICIENT_STOCK") 409
+else if (errId == "CONNECTIVITY") 503
+else 500]]></ee:set-variable>
+								</ee:variables>
+							</ee:transform>
+						</on-error-continue>
+					</error-handler>
+				</try>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- ============================================================================ -->
+	<!-- 4. Actualizar estatus de sincronización Salesforce (PATCH /orders/{id}/sync) -->
+	<!-- ============================================================================ -->
+	<sub-flow name="imp-patch-order-syncSub_Flow" doc:id="c66b83f5-8fa4-4a09-b545-e520dd195d99">
+		<set-variable value="#[payload]" doc:name="Save syncUpdateReq" doc:id="set-var-sync-req" variableName="syncUpdateReq" />
+		<db:update doc:name="UPDATE Order Sync Status" doc:id="db-update-order-sync-status" config-ref="Database_Config" target="patchResult">
+			<db:sql><![CDATA[UPDATE retail_orders
+SET sync_status = :syncStatus,
+    salesforce_id = COALESCE(:salesforceId, salesforce_id),
+    last_sync_error = :lastSyncError,
+    sync_attempts = CASE WHEN :syncAttempted = TRUE THEN sync_attempts + 1 ELSE sync_attempts END,
+    updated_at = CURRENT_TIMESTAMP
+WHERE order_id = :orderId]]></db:sql>
+			<db:input-parameters><![CDATA[#[{
+	orderId: vars.orderId,
+	syncStatus: vars.syncUpdateReq.syncStatus,
+	salesforceId: vars.syncUpdateReq.salesforceId default null,
+	lastSyncError: vars.syncUpdateReq.lastSyncError default null,
+	syncAttempted: (vars.syncUpdateReq.syncAttempted default true) as Boolean
+}]]]></db:input-parameters>
+		</db:update>
+		<choice doc:name="Order Found for Patch?" doc:id="choice-order-found-patch">
+			<when expression="#[(vars.patchResult.affectedRows default 0) &gt; 0]">
+				<flow-ref doc:name="imp-get-order-by-idSub_Flow" doc:id="flow-ref-get-updated-order" name="imp-get-order-by-idSub_Flow" />
+			</when>
+			<otherwise>
+				<ee:transform doc:name="Order Not Found (404)" doc:id="tf-patch-order-not-found-404">
+					<ee:message>
+						<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "ORDER_NOT_FOUND",
+    message: "No existe la orden para actualizar sincronizacion: " ++ (vars.orderId default ""),
+    httpStatus: 404,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables>
+						<ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+</mule>

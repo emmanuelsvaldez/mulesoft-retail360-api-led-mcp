@@ -1,0 +1,23 @@
+api:
+  http:
+    port: '8081'
+
+retail-orders-pro-api:
+  http:
+    protocol: 'HTTP'
+    host: 'localhost'
+    port: '8082'
+    basePath: '/internal/v1'
+    paths:
+      getOrdersReport:
+        path: '/orders/report'
+        method: 'GET'
+      getOrderById:
+        path: '/orders/{orderId}'
+        method: 'GET'
+      createOrder:
+        path: '/orders'
+        method: 'POST'
+      getProductBySku:
+        path: '/products/{sku}'
+        method: 'GET'

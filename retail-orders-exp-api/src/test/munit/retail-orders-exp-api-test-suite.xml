@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+	<munit:config name="retail-orders-exp-api-test-suite.xml" />
+
+	<!-- ========================================================================= -->
+	<!-- TEST 1: CA-01 - Consultar producto existente LAP-001 con retorno 200 OK  -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-01-get-product-success-test" doc:id="munit-test-01" description="Verifica consulta exitosa de LAP-001">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API Get Product" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- {"sku": "LAP-001", "productName": "Laptop 14 pulgadas", "unitPrice": 18000.00, "stock": 12, "active": true}]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[200]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event SKU">
+				<munit:variables>
+					<munit:variable key="sku" value="LAP-001" />
+				</munit:variables>
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-get-product-by-skuSub_Flow" name="imp-get-product-by-skuSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.sku]" is="#[MunitTools::equalTo('LAP-001')]" message="El SKU debe coincidir con LAP-001" />
+			<munit-tools:assert-that expression="#[payload.stock]" is="#[MunitTools::equalTo(12)]" message="El stock debe ser 12" />
+			<munit-tools:assert-that expression="#[payload.active]" is="#[MunitTools::equalTo(true)]" message="El producto debe estar activo" />
+		</munit:validation>
+	</munit:test>
+
+	<!-- ========================================================================= -->
+	<!-- TEST 2: CA-06 - Consultar producto inexistente XXX-999 con 404            -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-02-get-product-not-found-test" doc:id="munit-test-02" description="Verifica error 404 para producto inexistente">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API 404 Not Found" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- {"error": {"code": "PRODUCT_NOT_FOUND", "message": "Product with SKU XXX-999 was not found", "timestamp": "2026-11-03T12:00:00Z"}}]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[404]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event SKU Inexistente">
+				<munit:variables>
+					<munit:variable key="sku" value="XXX-999" />
+				</munit:variables>
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-get-product-by-skuSub_Flow" name="imp-get-product-by-skuSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.error.code]" is="#[MunitTools::equalTo('PRODUCT_NOT_FOUND')]" message="El código de error debe ser PRODUCT_NOT_FOUND" />
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(404)]" message="El código HTTP debe ser 404" />
+		</munit:validation>
+	</munit:test>
+
+	<!-- ========================================================================= -->
+	<!-- TEST 3: CA-02 - Alta de orden exitosa sincronizada con retorno 201        -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-03-create-order-synced-201-test" doc:id="munit-test-03" description="Verifica alta exitosa y sincronizada con retorno 201">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API Create Order" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- {"orderId": "ORD-1001", "customerId": "CUST-001", "customerName": "Juan Perez", "total": 37050.00, "currency": "MXN", "syncStatus": "SYNCED", "salesforceId": "a00ak00000abc123"}]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[201]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event Create Order">
+				<munit:payload value='#[%dw 2.0 output application/json --- {"orderId": "ORD-1001", "customerId": "CUST-001", "customerName": "Juan Perez", "customerEmail": "juan.perez@example.com", "items": [{"sku": "LAP-001", "quantity": 2}, {"sku": "MOU-001", "quantity": 3}]}]' mediaType="application/json" />
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-create-orderSub_Flow" name="imp-create-orderSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.orderId]" is="#[MunitTools::equalTo('ORD-1001')]" message="El OrderId debe ser ORD-1001" />
+			<munit-tools:assert-that expression="#[payload.total]" is="#[MunitTools::equalTo(37050.00)]" message="El total calculado debe ser 37050.00" />
+			<munit-tools:assert-that expression="#[payload.syncStatus]" is="#[MunitTools::equalTo('SYNCED')]" message="El estado debe ser SYNCED" />
+			<munit-tools:assert-that expression="#[payload.salesforceId]" is="#[MunitTools::notNullValue()]" message="El salesforceId debe estar presente" />
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(201)]" message="El código HTTP debe ser 201" />
+		</munit:validation>
+	</munit:test>
+
+	<!-- ========================================================================= -->
+	<!-- TEST 4: CA-04 - Idempotencia: Rechazo de orden duplicada con 409          -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-04-create-order-duplicate-409-test" doc:id="munit-test-04" description="Verifica respuesta 409 cuando la orden ya existe">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API 409 Conflict" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- {"error": {"code": "ORDER_ALREADY_EXISTS", "message": "Order ORD-1001 already exists", "timestamp": "2026-11-03T12:00:00Z"}}]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[409]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event Duplicate Order">
+				<munit:payload value='#[%dw 2.0 output application/json --- {"orderId": "ORD-1001", "customerId": "CUST-001", "customerName": "Juan Perez", "customerEmail": "juan.perez@example.com", "items": [{"sku": "LAP-001", "quantity": 2}]}]' mediaType="application/json" />
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-create-orderSub_Flow" name="imp-create-orderSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.error.code]" is="#[MunitTools::equalTo('ORDER_ALREADY_EXISTS')]" message="El código de error debe ser ORDER_ALREADY_EXISTS" />
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(409)]" message="El código HTTP debe ser 409" />
+		</munit:validation>
+	</munit:test>
+
+	<!-- ========================================================================= -->
+	<!-- TEST 5: CA-09 - Contingencia Salesforce con retorno 202 y PENDING_SYNC    -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-05-create-order-contingency-202-test" doc:id="munit-test-05" description="Verifica respuesta 202 y PENDING_SYNC si SF falla">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API 202 Accepted" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- {"orderId": "ORD-1006", "customerId": "CUST-006", "customerName": "Laura Medina", "total": 950.00, "currency": "MXN", "syncStatus": "PENDING_SYNC", "salesforceId": null}]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[202]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event Contingency Order">
+				<munit:payload value='#[%dw 2.0 output application/json --- {"orderId": "ORD-1006", "customerId": "CUST-006", "customerName": "Laura Medina", "customerEmail": "laura.medina@example.com", "items": [{"sku": "CAM-001", "quantity": 1}]}]' mediaType="application/json" />
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-create-orderSub_Flow" name="imp-create-orderSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[payload.syncStatus]" is="#[MunitTools::equalTo('PENDING_SYNC')]" message="El syncStatus debe ser PENDING_SYNC" />
+			<munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo(202)]" message="El status code debe ser 202 Accepted" />
+		</munit:validation>
+	</munit:test>
+
+	<!-- ========================================================================= -->
+	<!-- TEST 6: CA-11 - Generación de reporte de órdenes en formato text/csv     -->
+	<!-- ========================================================================= -->
+	<munit:test name="munit-06-orders-report-csv-format-test" doc:id="munit-test-06" description="Verifica generación de CSV con cabecera única">
+		<munit:behavior>
+			<munit-tools:mock-when doc:name="Mock Pro API Orders Report" processor="flow-ref">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute whereValue="client_request_retailOrderProApiSub_Flow" attributeName="name" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value='#[%dw 2.0 output application/json --- [{"orderId": "ORD-1001", "customerId": "CUST-001", "customerName": "Juan Perez", "status": "COMPLETED", "syncStatus": "SYNCED", "total": 37050.00, "currency": "MXN", "sku": "LAP-001", "quantity": 2, "unitPrice": 18000.00, "subtotal": 36000.00}]]' mediaType="application/json" />
+					<munit-tools:variables>
+						<munit-tools:variable key="httpStatus" value="#[200]" />
+					</munit-tools:variables>
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		<munit:execution>
+			<munit:set-event doc:name="Set Event Accept text/csv">
+				<munit:attributes value="#[{headers: {'accept': 'text/csv'}}]" />
+			</munit:set-event>
+			<flow-ref doc:name="Flow-ref to imp-orders-reportSub_Flow" name="imp-orders-reportSub_Flow" />
+		</munit:execution>
+		<munit:validation>
+			<munit-tools:assert-that expression="#[vars.outboundHeaders['Content-Type']]" is="#[MunitTools::equalTo('text/csv; charset=UTF-8')]" message="El Content-Type debe ser text/csv; charset=UTF-8" />
+			<munit-tools:assert-that expression="#[payload]" is="#[MunitTools::notNullValue()]" message="El CSV generado no debe ser nulo" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd ">
+    <http:listener-config name="retail-orders-exp-api-httpListenerConfig">
+        <http:listener-connection host="0.0.0.0" port="${api.http.port}" />
+    </http:listener-config>
+    <apikit:config name="retail-orders-exp-api-config" api="resource::876dba8c-1a93-41e2-ba53-3af65c408406:retail-orders-exp-api:1.0.0:raml:zip:retail-orders-exp-api.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
+
+    <!-- Listener Principal (/api/v1/* según baseUri RAML) -->
+    <flow name="retail-orders-exp-api-main">
+        <http:listener config-ref="retail-orders-exp-api-httpListenerConfig" path="/api/v1/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref doc:name="retail-orders-exp-api-routerSub_Flow" name="retail-orders-exp-api-routerSub_Flow" />
+    </flow>
+
+    <!-- Listener Secundario (/api/* para retrocompatibilidad) -->
+    <flow name="retail-orders-exp-api-main-legacy">
+        <http:listener config-ref="retail-orders-exp-api-httpListenerConfig" path="/api/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref doc:name="retail-orders-exp-api-routerSub_Flow" name="retail-orders-exp-api-routerSub_Flow" />
+    </flow>
+
+    <sub-flow name="retail-orders-exp-api-routerSub_Flow">
+        <ee:transform doc:name="Init CorrelationId">
+            <ee:variables>
+                <ee:set-variable variableName="correlationId"><![CDATA[attributes.headers.'x-correlation-id' default correlationId]]></ee:set-variable>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[output application/java
+---
+{
+    "X-Correlation-ID": attributes.headers.'x-correlation-id' default correlationId
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <try doc:name="Try APIKit Router">
+            <apikit:router config-ref="retail-orders-exp-api-config" />
+            <error-handler>
+                <on-error-continue type="APIKIT:BAD_REQUEST">
+                    <ee:transform doc:name="400 VALIDATION_ERROR">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "VALIDATION_ERROR",
+    message: error.description default "La solicitud contiene datos invalidos.",
+    httpStatus: 400,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">400</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="APIKIT:NOT_FOUND">
+                    <ee:transform doc:name="404 RESOURCE_NOT_FOUND">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "RESOURCE_NOT_FOUND",
+    message: "El recurso solicitado no existe.",
+    httpStatus: 404,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">404</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="APIKIT:METHOD_NOT_ALLOWED">
+                    <ee:transform doc:name="405 METHOD_NOT_ALLOWED">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "METHOD_NOT_ALLOWED",
+    message: "Metodo HTTP no permitido.",
+    httpStatus: 405,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">405</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+                <on-error-continue type="ANY">
+                    <ee:transform doc:name="500 INTERNAL_ERROR">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: {
+    code: "INTERNAL_ERROR",
+    message: error.description default "Ocurrio un error inesperado en Orders Experience API.",
+    httpStatus: 500,
+    correlationId: vars.correlationId default correlationId
+  }
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus">500</ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <flow name="retail-orders-exp-api-console">
+        <http:listener config-ref="retail-orders-exp-api-httpListenerConfig" path="/console/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:console config-ref="retail-orders-exp-api-config" />
+    </flow>
+
+    <flow name="get:\orders\report:retail-orders-exp-api-config">
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Generando reporte CSV de ordenes..." />
+        <flow-ref doc:name="imp-orders-reportSub_Flow" doc:id="82be7ea5-17ee-4f14-8787-b85c1ce9ac63" name="imp-orders-reportSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Reporte CSV generado exitosamente." />
+    </flow>
+
+    <flow name="get:\orders\(orderId):retail-orders-exp-api-config">
+        <ee:transform doc:name="Extract orderId">
+            <ee:variables>
+                <ee:set-variable variableName="orderId">attributes.uriParams.'orderId'</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Consultando orden: #[vars.orderId]" />
+        <flow-ref doc:name="imp-get-order-by-idSub_Flow" name="imp-get-order-by-idSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Orden consultada exitosamente: #[vars.orderId]" />
+    </flow>
+
+    <flow name="get:\products\(sku):retail-orders-exp-api-config">
+        <ee:transform doc:name="Extract sku">
+            <ee:variables>
+                <ee:set-variable variableName="sku">attributes.uriParams.'sku'</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Consultando producto: #[vars.sku]" />
+        <flow-ref doc:name="imp-get-product-by-skuSub_Flow" name="imp-get-product-by-skuSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Producto consultado exitosamente: #[vars.sku]" />
+    </flow>
+
+    <flow name="post:\orders:application\json:retail-orders-exp-api-config">
+        <logger level="INFO" doc:name="Logger Inicio" message="[#[vars.correlationId]] Registrando nueva orden: #[payload.orderId default '']" />
+        <flow-ref doc:name="imp-create-orderSub_Flow" name="imp-create-orderSub_Flow"/>
+        <logger level="INFO" doc:name="Logger Fin" message="[#[vars.correlationId]] Orden procesada (HTTP #[vars.httpStatus default 201])" />
+    </flow>
+</mule>

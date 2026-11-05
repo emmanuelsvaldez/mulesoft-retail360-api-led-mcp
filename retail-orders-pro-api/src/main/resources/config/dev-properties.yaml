@@ -1,0 +1,49 @@
+api:
+  http:
+    port: '8082'
+
+scheduler:
+  sync:
+    frequency: '60'
+    timeUnit: 'SECONDS'
+    enabled: 'true'
+
+retail-db-sys-api:
+  http:
+    protocol: 'HTTP'
+    host: 'localhost'
+    port: '8083'
+    basePath: '/api/v1'
+    paths:
+      getProductBySku:
+        path: '/products/{sku}'
+        method: 'GET'
+      createOrder:
+        path: '/orders'
+        method: 'POST'
+      getOrdersByStatus:
+        path: '/orders'
+        method: 'GET'
+      getOrdersReport:
+        path: '/orders/report'
+        method: 'GET'
+      getOrderById:
+        path: '/orders/{orderId}'
+        method: 'GET'
+      updateOrderSync:
+        path: '/orders/{orderId}/sync'
+        method: 'PATCH'
+
+retail-salesforce-sys-api:
+  http:
+    protocol: 'HTTP'
+    host: 'localhost'
+    port: '8084'
+    basePath: '/api/v1'
+    paths:
+      upsertOrder:
+        path: '/orders/{orderId}'
+        method: 'PUT'
+      getOrderById:
+        path: '/orders/{orderId}'
+        method: 'GET'

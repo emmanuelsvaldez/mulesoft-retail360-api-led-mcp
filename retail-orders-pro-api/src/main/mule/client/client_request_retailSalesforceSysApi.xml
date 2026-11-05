@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<sub-flow name="client_request_retailSalesforceSysApiSub_Flow" doc:id="fba86ce5-a505-470a-bd63-54911d3d633b">
+		<try doc:name="Try Request Salesforce System API" doc:id="167c13dc-3221-4f10-91be-a6b1e60055c6">
+			<http:request method="#[vars.request.method]" doc:name="Retail Salesforce System API" doc:id="3a4c52f6-be2e-4b47-b8db-452f360ae8bf" config-ref="HTTP_Request_Retail_Salesforce_SYS_API" path="#[vars.request.path]">
+				<http:headers><![CDATA[#[{
+					"X-Correlation-ID": vars.correlationId default correlationId
+				}]]]></http:headers>
+			</http:request>
+			<error-handler>
+				<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="2d4a20b0-77a8-4447-97d8-e7b399d8b76c" type="ANY">
+					<ee:transform doc:name="Build Dynamic Error Message" doc:id="28fb9958-450f-4318-ae70-e4d0d3c01c0d">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var downstream = error.errorMessage.payload
+var errId = error.errorType.identifier default "UNKNOWN"
+var code = error.errorMessage.attributes.statusCode default (
+    if (errId == "BAD_GATEWAY") 502
+    else if (errId == "TIMEOUT" or errId == "CONNECTIVITY") 503
+    else if (errId == "BAD_REQUEST") 400
+    else if (errId == "NOT_FOUND") 404
+    else 500
+)
+---
+if (downstream != null and downstream.error != null) downstream
+else {
+    "success": false,
+    "error": {
+        "code": if (code == 502) "SALESFORCE_REJECTED"
+                else if (code == 503) "DEPENDENCY_UNAVAILABLE"
+                else if (code == 400) "VALIDATION_ERROR"
+                else "INTERNAL_ERROR",
+        "message": error.description default "Error al comunicar con Salesforce System API",
+        "httpStatus": code,
+        "correlationId": vars.correlationId default correlationId
+    }
+}]]></ee:set-payload>
+						</ee:message>
+						<ee:variables>
+							<ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+output application/java
+var errId = error.errorType.identifier default "UNKNOWN"
+---
+error.errorMessage.attributes.statusCode default (
+    if (errId == "BAD_GATEWAY") 502
+    else if (errId == "TIMEOUT" or errId == "CONNECTIVITY") 503
+    else if (errId == "BAD_REQUEST") 400
+    else if (errId == "NOT_FOUND") 404
+    else 500
+)]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+</mule>

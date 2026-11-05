@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<sub-flow name="imp-get-order-by-idSub_Flow" doc:id="86cffeb8-3aaa-4904-b4e5-7f264953ed21" >
+		<ee:transform doc:name="++ request" doc:id="08236486-9bc5-4a26-a20d-f5ed9f3a58b9" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="request" ><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-orders-pro-api.http.paths.getOrderById.method'),
+    path: (p('retail-orders-pro-api.http.paths.getOrderById.path') replace "{orderId}" with (vars.orderId default ""))
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="client_request_retailOrderProApiSub_Flow" doc:id="bcf8df1f-90b0-4d1f-9710-ab6e7dacb24b" name="client_request_retailOrderProApiSub_Flow"/>
+	</sub-flow>
+
+	<sub-flow name="imp-create-orderSub_Flow" doc:id="a9719a21-5a94-4d34-9c5e-ab58d302fb0a" >
+		<ee:transform doc:name="++ request" doc:id="9babf1f3-d8dc-40cc-a8d9-e8a4a9900a7d" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="request" ><![CDATA[%dw 2.0
+import p from Mule
+output application/java
+---
+{
+    method: p('retail-orders-pro-api.http.paths.createOrder.method'),
+    path: p('retail-orders-pro-api.http.paths.createOrder.path')
+}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="client_request_retailOrderProApiSub_Flow" doc:id="991bd3d0-420e-4d43-809d-892e4b587abe" name="client_request_retailOrderProApiSub_Flow"/>
+	</sub-flow>
+
+</mule>
