@@ -51,4 +51,8 @@ skala-notifications-sys-api/
 skala-orders-exp-api/
 skala-orders-proc-api/
 skala-payments-sys-api/
+simulador-peticiones-http-csv/
+simulador-peticiones-munit/
+skala-error-handler/
+skala-hola-mundo/
 
